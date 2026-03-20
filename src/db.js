@@ -358,6 +358,14 @@ async function initDatabase() {
     ON CONFLICT (id) DO NOTHING
   `);
 
+  // Auto-promote ADMIN_EMAIL to admin role if set
+  if (process.env.ADMIN_EMAIL) {
+    await db.run(
+      `UPDATE users SET role = 'admin' WHERE email = ?`,
+      [process.env.ADMIN_EMAIL.toLowerCase()]
+    );
+  }
+
   console.log('✅ Database initialized successfully');
 }
 
