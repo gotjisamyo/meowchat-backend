@@ -17,7 +17,7 @@ router.post('/register', async (req, res) => {
     }
 
     const db = getDb();
-    const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    const existingUser = await db.get('SELECT id FROM users WHERE email = ?', [email]);
     if (existingUser) {
       return res.status(400).json({
         error: 'Email already exists',
@@ -26,9 +26,10 @@ router.post('/register', async (req, res) => {
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const result = db.prepare(
-      'INSERT INTO users (email, password_hash, name, role) VALUES (?, ?, ?, ? )'
-    ).run(email, passwordHash, name, 'user');
+    const result = await db.run(
+      'INSERT INTO users (email, password_hash, name, role) VALUES (?, ?, ?, ?) RETURNING id',
+      [email, passwordHash, name, 'user']
+    );
 
     const token = generateToken(result.lastInsertRowid, 'user');
 
@@ -63,7 +64,7 @@ router.post('/login', async (req, res) => {
     }
 
     const db = getDb();
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    const user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
     if (!user) {
       return res.status(401).json({
         error: 'Invalid credentials',
@@ -100,10 +101,10 @@ router.post('/login', async (req, res) => {
   }
 });
 
-router.get('/me', authMiddleware, (req, res) => {
+router.get('/me', authMiddleware, async (req, res) => {
   try {
     const db = getDb();
-    const user = db.prepare('SELECT id, email, name, role, created_at FROM users WHERE id = ?').get(req.userId);
+    const user = await db.get('SELECT id, email, name, role, created_at FROM users WHERE id = ?', [req.userId]);
 
     if (!user) {
       return res.status(404).json({
@@ -129,14 +130,12 @@ router.put('/profile', authMiddleware, async (req, res) => {
 
     if (password) {
       const passwordHash = await bcrypt.hash(password, 10);
-      db.prepare('UPDATE users SET name = ?, password_hash = ? WHERE id = ?')
-        .run(name, passwordHash, req.userId);
+      await db.run('UPDATE users SET name = ?, password_hash = ? WHERE id = ?', [name, passwordHash, req.userId]);
     } else if (name) {
-      db.prepare('UPDATE users SET name = ? WHERE id = ?')
-        .run(name, req.userId);
+      await db.run('UPDATE users SET name = ? WHERE id = ?', [name, req.userId]);
     }
 
-    const user = db.prepare('SELECT id, email, name, role, created_at FROM users WHERE id = ?').get(req.userId);
+    const user = await db.get('SELECT id, email, name, role, created_at FROM users WHERE id = ?', [req.userId]);
 
     res.json({
       message: 'อัปเดตโปรไฟล์สำเร็จ',

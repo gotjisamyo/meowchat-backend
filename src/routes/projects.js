@@ -6,26 +6,26 @@ const { requireOwnedShop } = require('../middleware/shopAccess');
 
 router.use(authMiddleware);
 
-function getOwnedProject(db, userId, projectId) {
-  return db.prepare(`
+async function getOwnedProject(db, userId, projectId) {
+  return db.get(`
     SELECT p.*
     FROM projects p
     JOIN shops s ON s.id = p.shop_id
     WHERE p.id = ? AND s.user_id = ?
-  `).get(projectId, userId);
+  `, [projectId, userId]);
 }
 
-function getOwnedTask(db, userId, taskId) {
-  return db.prepare(`
+async function getOwnedTask(db, userId, taskId) {
+  return db.get(`
     SELECT pt.*, p.shop_id
     FROM project_tasks pt
     JOIN projects p ON p.id = pt.project_id
     JOIN shops s ON s.id = p.shop_id
     WHERE pt.id = ? AND s.user_id = ?
-  `).get(taskId, userId);
+  `, [taskId, userId]);
 }
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const db = getDb();
     const { shopId } = req.query;
@@ -34,18 +34,19 @@ router.get('/', (req, res) => {
       return res.status(400).json({ error: 'shopId is required' });
     }
 
-    if (!requireOwnedShop(req, res, shopId)) return;
+    if (!await requireOwnedShop(req, res, shopId)) return;
 
-    const projects = db.prepare(
-      'SELECT * FROM projects WHERE shop_id = ? ORDER BY created_at DESC'
-    ).all(req.shopId);
+    const projects = await db.all(
+      'SELECT * FROM projects WHERE shop_id = ? ORDER BY created_at DESC',
+      [req.shopId]
+    );
     res.json(projects);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const db = getDb();
     const { name, description, status, shopId } = req.body;
@@ -54,12 +55,12 @@ router.post('/', (req, res) => {
       return res.status(400).json({ error: 'shopId and name are required' });
     }
 
-    if (!requireOwnedShop(req, res, shopId)) return;
+    if (!await requireOwnedShop(req, res, shopId)) return;
 
-    const result = db.prepare(`
+    const result = await db.run(`
       INSERT INTO projects (name, description, status, shop_id, created_at)
-      VALUES (?, ?, ?, ?, datetime('now'))
-    `).run(name, description || '', status || 'active', req.shopId);
+      VALUES (?, ?, ?, ?, NOW()) RETURNING id
+    `, [name, description || '', status || 'active', req.shopId]);
 
     res.json({ id: result.lastInsertRowid, name, description, status: status || 'active', shopId: req.shopId });
   } catch (error) {
@@ -67,24 +68,24 @@ router.post('/', (req, res) => {
   }
 });
 
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const db = getDb();
     const { name, description, status } = req.body;
-    const project = getOwnedProject(db, req.userId, req.params.id);
+    const project = await getOwnedProject(db, req.userId, req.params.id);
 
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    db.prepare(`
+    await db.run(`
       UPDATE projects SET
         name = COALESCE(?, name),
         description = COALESCE(?, description),
         status = COALESCE(?, status),
-        updated_at = datetime('now')
+        updated_at = NOW()
       WHERE id = ? AND shop_id = ?
-    `).run(name, description, status, req.params.id, project.shop_id);
+    `, [name, description, status, req.params.id, project.shop_id]);
 
     res.json({ success: true });
   } catch (error) {
@@ -92,36 +93,37 @@ router.put('/:id', (req, res) => {
   }
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     const db = getDb();
-    const project = getOwnedProject(db, req.userId, req.params.id);
+    const project = await getOwnedProject(db, req.userId, req.params.id);
 
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    db.prepare('DELETE FROM projects WHERE id = ? AND shop_id = ?').run(req.params.id, project.shop_id);
+    await db.run('DELETE FROM projects WHERE id = ? AND shop_id = ?', [req.params.id, project.shop_id]);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-router.get('/tasks', (req, res) => {
+router.get('/tasks', async (req, res) => {
   try {
     const db = getDb();
     const { shopId, projectId } = req.query;
 
     if (projectId) {
-      const project = getOwnedProject(db, req.userId, projectId);
+      const project = await getOwnedProject(db, req.userId, projectId);
       if (!project) {
         return res.status(404).json({ error: 'Project not found' });
       }
 
-      const tasks = db.prepare(
-        'SELECT * FROM project_tasks WHERE project_id = ? ORDER BY created_at DESC'
-      ).all(projectId);
+      const tasks = await db.all(
+        'SELECT * FROM project_tasks WHERE project_id = ? ORDER BY created_at DESC',
+        [projectId]
+      );
       return res.json(tasks);
     }
 
@@ -129,14 +131,14 @@ router.get('/tasks', (req, res) => {
       return res.status(400).json({ error: 'shopId or projectId is required' });
     }
 
-    if (!requireOwnedShop(req, res, shopId)) return;
+    if (!await requireOwnedShop(req, res, shopId)) return;
 
-    const tasks = db.prepare(`
+    const tasks = await db.all(`
       SELECT pt.* FROM project_tasks pt
       JOIN projects p ON pt.project_id = p.id
       WHERE p.shop_id = ?
       ORDER BY pt.created_at DESC
-    `).all(req.shopId);
+    `, [req.shopId]);
 
     res.json(tasks);
   } catch (error) {
@@ -144,7 +146,7 @@ router.get('/tasks', (req, res) => {
   }
 });
 
-router.post('/tasks', (req, res) => {
+router.post('/tasks', async (req, res) => {
   try {
     const db = getDb();
     const { title, description, priority, status, projectId, dueDate } = req.body;
@@ -153,15 +155,15 @@ router.post('/tasks', (req, res) => {
       return res.status(400).json({ error: 'projectId and title are required' });
     }
 
-    const project = getOwnedProject(db, req.userId, projectId);
+    const project = await getOwnedProject(db, req.userId, projectId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const result = db.prepare(`
+    const result = await db.run(`
       INSERT INTO project_tasks (title, description, priority, status, project_id, due_date, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-    `).run(title, description || '', priority || 'medium', status || 'todo', projectId, dueDate || null);
+      VALUES (?, ?, ?, ?, ?, ?, NOW()) RETURNING id
+    `, [title, description || '', priority || 'medium', status || 'todo', projectId, dueDate || null]);
 
     res.json({
       id: result.lastInsertRowid,
@@ -176,17 +178,17 @@ router.post('/tasks', (req, res) => {
   }
 });
 
-router.put('/tasks/:id', (req, res) => {
+router.put('/tasks/:id', async (req, res) => {
   try {
     const db = getDb();
     const { title, description, priority, status, dueDate } = req.body;
-    const task = getOwnedTask(db, req.userId, req.params.id);
+    const task = await getOwnedTask(db, req.userId, req.params.id);
 
     if (!task) {
       return res.status(404).json({ error: 'Task not found' });
     }
 
-    db.prepare(`
+    await db.run(`
       UPDATE project_tasks
       SET
         title = COALESCE(?, title),
@@ -194,9 +196,9 @@ router.put('/tasks/:id', (req, res) => {
         priority = COALESCE(?, priority),
         status = COALESCE(?, status),
         due_date = COALESCE(?, due_date),
-        updated_at = datetime('now')
+        updated_at = NOW()
       WHERE id = ?
-    `).run(title, description, priority, status, dueDate, req.params.id);
+    `, [title, description, priority, status, dueDate, req.params.id]);
 
     res.json({ success: true });
   } catch (error) {
@@ -204,16 +206,16 @@ router.put('/tasks/:id', (req, res) => {
   }
 });
 
-router.delete('/tasks/:id', (req, res) => {
+router.delete('/tasks/:id', async (req, res) => {
   try {
     const db = getDb();
-    const task = getOwnedTask(db, req.userId, req.params.id);
+    const task = await getOwnedTask(db, req.userId, req.params.id);
 
     if (!task) {
       return res.status(404).json({ error: 'Task not found' });
     }
 
-    db.prepare('DELETE FROM project_tasks WHERE id = ?').run(req.params.id);
+    await db.run('DELETE FROM project_tasks WHERE id = ?', [req.params.id]);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });

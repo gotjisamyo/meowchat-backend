@@ -33,9 +33,6 @@ const lineConfig = {
   channelSecret: process.env.LINE_CHANNEL_SECRET
 };
 
-// Initialize database
-initDatabase();
-
 // LINE webhook handler (only register if credentials are provided)
 if (lineConfig.channelAccessToken && lineConfig.channelSecret) {
   app.post('/webhook', line.middleware(lineConfig), async (req, res) => {
@@ -90,7 +87,7 @@ app.post('/api/chat', authMiddleware, async (req, res) => {
     if (!shopId) {
       return res.status(400).json({ error: 'shopId is required' });
     }
-    if (!requireOwnedShop(req, res, shopId)) {
+    if (!await requireOwnedShop(req, res, shopId)) {
       return;
     }
 
@@ -109,8 +106,17 @@ app.post('/api/chat', authMiddleware, async (req, res) => {
 
 // Start server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 MeowChat Backend running on port ${PORT}`);
+
+async function start() {
+  await initDatabase();
+  app.listen(PORT, () => {
+    console.log(`🚀 MeowChat Backend running on port ${PORT}`);
+  });
+}
+
+start().catch(err => {
+  console.error(err);
+  process.exit(1);
 });
 
 module.exports = { app, lineConfig };

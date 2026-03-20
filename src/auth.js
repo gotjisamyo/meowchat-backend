@@ -28,8 +28,8 @@ function extractToken(authHeader) {
   return parts[1];
 }
 
-function attachAuthenticatedUser(req, res, decoded) {
-  const user = findUserById(decoded.userId);
+async function attachAuthenticatedUser(req, res, decoded) {
+  const user = await findUserById(decoded.userId);
 
   if (!user) {
     res.status(401).json({
@@ -51,7 +51,7 @@ function attachAuthenticatedUser(req, res, decoded) {
   return true;
 }
 
-function authMiddleware(req, res, next) {
+async function authMiddleware(req, res, next) {
   const token = extractToken(req.headers.authorization);
 
   if (!token) {
@@ -70,20 +70,20 @@ function authMiddleware(req, res, next) {
     });
   }
 
-  if (!attachAuthenticatedUser(req, res, decoded)) {
+  if (!await attachAuthenticatedUser(req, res, decoded)) {
     return;
   }
 
   next();
 }
 
-function optionalAuthMiddleware(req, res, next) {
+async function optionalAuthMiddleware(req, res, next) {
   const token = extractToken(req.headers.authorization);
 
   if (token) {
     const decoded = verifyToken(token);
     if (decoded) {
-      attachAuthenticatedUser(req, res, decoded);
+      await attachAuthenticatedUser(req, res, decoded);
     }
   }
 

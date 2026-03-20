@@ -1,14 +1,12 @@
 const { getDb } = require('../db');
 
-function getOwnedShop(db, userId, shopId) {
-  return db
-    .prepare('SELECT * FROM shops WHERE id = ? AND user_id = ?')
-    .get(shopId, userId);
+async function getOwnedShop(db, userId, shopId) {
+  return db.get('SELECT * FROM shops WHERE id = ? AND user_id = ?', [shopId, userId]);
 }
 
-function requireOwnedShop(req, res, shopId) {
+async function requireOwnedShop(req, res, shopId) {
   const db = getDb();
-  const shop = getOwnedShop(db, req.userId, shopId);
+  const shop = await getOwnedShop(db, req.userId, shopId);
 
   if (!shop) {
     res.status(403).json({

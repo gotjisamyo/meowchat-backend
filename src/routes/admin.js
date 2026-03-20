@@ -6,10 +6,10 @@ const router = express.Router();
 
 router.use(authMiddleware, requireAdmin);
 
-router.get('/shops', (req, res) => {
+router.get('/shops', async (req, res) => {
   try {
     const db = getDb();
-    const shops = db.prepare(`
+    const shops = await db.all(`
       SELECT
         s.*,
         u.email AS owner_email,
@@ -32,7 +32,7 @@ router.get('/shops', (req, res) => {
       FROM shops s
       LEFT JOIN users u ON u.id = s.user_id
       ORDER BY s.created_at DESC
-    `).all();
+    `);
 
     res.json({ shops });
   } catch (error) {
@@ -41,7 +41,7 @@ router.get('/shops', (req, res) => {
   }
 });
 
-router.patch('/shops/:id/plan', (req, res) => {
+router.patch('/shops/:id/plan', async (req, res) => {
   try {
     const { plan } = req.body || {};
     const allowedPlans = ['free', 'starter', 'business', 'enterprise'];
@@ -54,24 +54,24 @@ router.patch('/shops/:id/plan', (req, res) => {
     }
 
     const db = getDb();
-    const existingShop = db.prepare('SELECT * FROM shops WHERE id = ?').get(req.params.id);
+    const existingShop = await db.get('SELECT * FROM shops WHERE id = ?', [req.params.id]);
 
     if (!existingShop) {
       return res.status(404).json({ error: 'Shop not found', message: 'ไม่พบร้านค้า' });
     }
 
-    db.prepare(`
+    await db.run(`
       UPDATE shops
       SET plan = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(String(plan).toLowerCase(), req.params.id);
+    `, [String(plan).toLowerCase(), req.params.id]);
 
-    const shop = db.prepare(`
+    const shop = await db.get(`
       SELECT s.*, u.email AS owner_email, u.name AS owner_name, u.role AS owner_role
       FROM shops s
       LEFT JOIN users u ON u.id = s.user_id
       WHERE s.id = ?
-    `).get(req.params.id);
+    `, [req.params.id]);
 
     res.json({ message: 'อัปเดตแพ็กเกจร้านสำเร็จ', shop });
   } catch (error) {
@@ -80,10 +80,10 @@ router.patch('/shops/:id/plan', (req, res) => {
   }
 });
 
-router.get('/payments', (req, res) => {
+router.get('/payments', async (req, res) => {
   try {
     const db = getDb();
-    const payments = db.prepare(`
+    const payments = await db.all(`
       SELECT pn.*, s.name AS shop_name
       FROM payment_notifications pn
       LEFT JOIN shops s ON s.id = pn.shop_id
@@ -95,7 +95,7 @@ router.get('/payments', (req, res) => {
           ELSE 3
         END,
         pn.created_at DESC
-    `).all();
+    `);
 
     res.json({ payments });
   } catch (error) {
@@ -104,22 +104,22 @@ router.get('/payments', (req, res) => {
   }
 });
 
-router.post('/payments/:id/approve', (req, res) => {
+router.post('/payments/:id/approve', async (req, res) => {
   try {
     const db = getDb();
-    const payment = db.prepare('SELECT * FROM payment_notifications WHERE id = ?').get(req.params.id);
+    const payment = await db.get('SELECT * FROM payment_notifications WHERE id = ?', [req.params.id]);
 
     if (!payment) {
       return res.status(404).json({ error: 'Payment not found', message: 'ไม่พบรายการแจ้งโอน' });
     }
 
-    db.prepare(`
+    await db.run(`
       UPDATE payment_notifications
       SET status = 'approved', updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(req.params.id);
+    `, [req.params.id]);
 
-    const updatedPayment = db.prepare('SELECT * FROM payment_notifications WHERE id = ?').get(req.params.id);
+    const updatedPayment = await db.get('SELECT * FROM payment_notifications WHERE id = ?', [req.params.id]);
 
     res.json({ message: 'อนุมัติการแจ้งโอนเรียบร้อยแล้ว', payment: updatedPayment });
   } catch (error) {
@@ -128,22 +128,22 @@ router.post('/payments/:id/approve', (req, res) => {
   }
 });
 
-router.post('/payments/:id/reject', (req, res) => {
+router.post('/payments/:id/reject', async (req, res) => {
   try {
     const db = getDb();
-    const payment = db.prepare('SELECT * FROM payment_notifications WHERE id = ?').get(req.params.id);
+    const payment = await db.get('SELECT * FROM payment_notifications WHERE id = ?', [req.params.id]);
 
     if (!payment) {
       return res.status(404).json({ error: 'Payment not found', message: 'ไม่พบรายการแจ้งโอน' });
     }
 
-    db.prepare(`
+    await db.run(`
       UPDATE payment_notifications
       SET status = 'rejected', updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(req.params.id);
+    `, [req.params.id]);
 
-    const updatedPayment = db.prepare('SELECT * FROM payment_notifications WHERE id = ?').get(req.params.id);
+    const updatedPayment = await db.get('SELECT * FROM payment_notifications WHERE id = ?', [req.params.id]);
 
     res.json({ message: 'ปฏิเสธการแจ้งโอนเรียบร้อยแล้ว', payment: updatedPayment });
   } catch (error) {

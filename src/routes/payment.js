@@ -20,38 +20,7 @@ const MIME_SIGNATURES = {
   ]
 };
 
-function ensureColumn(db, table, column, definition) {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
-  if (!columns.some((col) => col.name === column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-  }
-}
-
-function initPaymentTable() {
-  const db = getDb();
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS payment_notifications (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      shop_id TEXT,
-      payer_name TEXT NOT NULL,
-      amount REAL NOT NULL,
-      transfer_date TEXT NOT NULL,
-      proof_file_name TEXT,
-      proof_content_type TEXT,
-      proof_base64 TEXT,
-      bank_name TEXT NOT NULL,
-      account_name TEXT NOT NULL,
-      account_number TEXT NOT NULL,
-      status TEXT DEFAULT 'pending',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  ensureColumn(db, 'payment_notifications', 'shop_id', 'TEXT');
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_payment_notifications_shop_id ON payment_notifications(shop_id)`);
-}
+// payment_notifications table is now created in initDatabase()
 
 function normalizeBase64(input) {
   const value = String(input || '').trim();
@@ -146,8 +115,6 @@ function validateProofImage(proofImage) {
   };
 }
 
-initPaymentTable();
-
 router.get('/info', (req, res) => {
   res.json({
     success: true,
@@ -155,7 +122,7 @@ router.get('/info', (req, res) => {
   });
 });
 
-router.post('/notify', (req, res) => {
+router.post('/notify', async (req, res) => {
   try {
     const {
       shopId,
@@ -191,12 +158,16 @@ router.post('/notify', (req, res) => {
     }
 
     const db = getDb();
-    const shop = db.prepare('SELECT id FROM shops WHERE id = ?').get(String(shopId).trim());
+    const shop = await db.get('SELECT id FROM shops WHERE id = ?', [String(shopId).trim()]);
     if (!shop) {
       return res.status(404).json({ success: false, error: 'shopId is invalid' });
     }
 
-    const stmt = db.prepare(`
+    const normalizedShopId = String(shopId).trim();
+    const normalizedTransferDate = new Date(transferDate).toISOString();
+    const normalizedPayerName = String(payerName).trim();
+
+    const result = await db.run(`
       INSERT INTO payment_notifications (
         shop_id,
         payer_name,
@@ -211,14 +182,8 @@ router.post('/notify', (req, res) => {
         status,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)
-    `);
-
-    const normalizedShopId = String(shopId).trim();
-    const normalizedTransferDate = new Date(transferDate).toISOString();
-    const normalizedPayerName = String(payerName).trim();
-
-    const result = stmt.run(
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP) RETURNING id
+    `, [
       normalizedShopId,
       normalizedPayerName,
       parsedAmount,
@@ -229,7 +194,7 @@ router.post('/notify', (req, res) => {
       String(bankName || BANK_INFO.bankName).trim(),
       String(accountName || BANK_INFO.accountName).trim(),
       String(accountNumber || BANK_INFO.accountNumber).trim()
-    );
+    ]);
 
     res.status(201).json({
       success: true,

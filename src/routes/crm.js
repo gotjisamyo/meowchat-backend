@@ -7,22 +7,22 @@ const { requireOwnedShop } = require('../middleware/shopAccess');
 
 router.use(authMiddleware);
 
-function getOwnedCustomer(db, userId, customerId) {
-  return db.prepare(`
+async function getOwnedCustomer(db, userId, customerId) {
+  return db.get(`
     SELECT c.*
     FROM customers c
     JOIN shops s ON s.id = c.shop_id
     WHERE c.id = ? AND s.user_id = ?
-  `).get(customerId, userId);
+  `, [customerId, userId]);
 }
 
 // Get all customers for a shop
-router.get('/list/:shopId', (req, res) => {
+router.get('/list/:shopId', async (req, res) => {
   const db = getDb();
   const { shopId } = req.params;
   const { group, search } = req.query;
 
-  if (!requireOwnedShop(req, res, shopId)) {
+  if (!await requireOwnedShop(req, res, shopId)) {
     return;
   }
 
@@ -41,20 +41,20 @@ router.get('/list/:shopId', (req, res) => {
 
   query += ' ORDER BY created_at DESC';
 
-  const customers = db.prepare(query).all(...params);
+  const customers = await db.all(query, params);
   res.json(customers);
 });
 
 // Get customer stats
-router.get('/:shopId/stats', (req, res) => {
+router.get('/:shopId/stats', async (req, res) => {
   const db = getDb();
   const { shopId } = req.params;
 
-  if (!requireOwnedShop(req, res, shopId)) {
+  if (!await requireOwnedShop(req, res, shopId)) {
     return;
   }
 
-  const stats = db.prepare(`
+  const stats = await db.get(`
     SELECT
       COUNT(*) as total_customers,
       SUM(CASE WHEN customer_group = 'vip' THEN 1 ELSE 0 END) as vip_customers,
@@ -63,21 +63,21 @@ router.get('/:shopId/stats', (req, res) => {
       COALESCE(AVG(total_spent), 0) as avg_spent
     FROM customers
     WHERE shop_id = ? AND status = 'active'
-  `).get(req.shopId);
+  `, [req.shopId]);
 
   res.json(stats || { total_customers: 0, vip_customers: 0, total_orders: 0, total_revenue: 0, avg_spent: 0 });
 });
 
 // Get customer groups
-router.get('/:shopId/groups', (req, res) => {
+router.get('/:shopId/groups', async (req, res) => {
   const db = getDb();
   const { shopId } = req.params;
 
-  if (!requireOwnedShop(req, res, shopId)) {
+  if (!await requireOwnedShop(req, res, shopId)) {
     return;
   }
 
-  const groups = db.prepare(`
+  const groups = await db.all(`
     SELECT
       customer_group as group_name,
       COUNT(*) as count,
@@ -85,38 +85,38 @@ router.get('/:shopId/groups', (req, res) => {
     FROM customers
     WHERE shop_id = ? AND status = 'active'
     GROUP BY customer_group
-  `).all(req.shopId);
+  `, [req.shopId]);
 
   res.json(groups);
 });
 
 // Get single customer
-router.get('/:shopId/:id', (req, res) => {
+router.get('/:shopId/:id', async (req, res) => {
   const db = getDb();
   const { shopId, id } = req.params;
 
-  if (!requireOwnedShop(req, res, shopId)) {
+  if (!await requireOwnedShop(req, res, shopId)) {
     return;
   }
 
-  const customer = getOwnedCustomer(db, req.userId, id);
+  const customer = await getOwnedCustomer(db, req.userId, id);
 
   if (!customer || customer.shop_id !== req.shopId) {
     return res.status(404).json({ error: 'Customer not found' });
   }
 
-  const orders = db.prepare(`
+  const orders = await db.all(`
     SELECT * FROM orders
     WHERE customer_id = ? AND shop_id = ?
     ORDER BY created_at DESC
     LIMIT 10
-  `).all(id, req.shopId);
+  `, [id, req.shopId]);
 
   res.json({ customer, orders });
 });
 
 // Create customer
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const db = getDb();
   const {
     shopId, lineUserId, name, phone, email,
@@ -127,7 +127,7 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  if (!requireOwnedShop(req, res, shopId)) {
+  if (!await requireOwnedShop(req, res, shopId)) {
     return;
   }
 
@@ -135,17 +135,17 @@ router.post('/', (req, res) => {
   const now = new Date().toISOString();
 
   try {
-    db.prepare(`
+    await db.run(`
       INSERT INTO customers (
         id, shop_id, line_user_id, name, phone, email,
         address, note, customer_group, status, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
-    `).run(
+    `, [
       id, req.shopId, lineUserId, name, phone, email,
       address, note, customerGroup || 'regular', now, now
-    );
+    ]);
 
-    const customer = db.prepare('SELECT * FROM customers WHERE id = ? AND shop_id = ?').get(id, req.shopId);
+    const customer = await db.get('SELECT * FROM customers WHERE id = ? AND shop_id = ?', [id, req.shopId]);
     res.json(customer);
   } catch (error) {
     console.error('Create customer error:', error);
@@ -154,19 +154,19 @@ router.post('/', (req, res) => {
 });
 
 // Update customer
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   const db = getDb();
   const { id } = req.params;
   const { name, phone, email, address, note, customerGroup, status } = req.body;
   const now = new Date().toISOString();
 
-  const customer = getOwnedCustomer(db, req.userId, id);
+  const customer = await getOwnedCustomer(db, req.userId, id);
   if (!customer) {
     return res.status(404).json({ error: 'Customer not found' });
   }
 
   try {
-    db.prepare(`
+    await db.run(`
       UPDATE customers SET
         name = COALESCE(?, name),
         phone = COALESCE(?, phone),
@@ -177,9 +177,9 @@ router.put('/:id', (req, res) => {
         status = COALESCE(?, status),
         updated_at = ?
       WHERE id = ? AND shop_id = ?
-    `).run(name, phone, email, address, note, customerGroup, status, now, id, customer.shop_id);
+    `, [name, phone, email, address, note, customerGroup, status, now, id, customer.shop_id]);
 
-    const updatedCustomer = db.prepare('SELECT * FROM customers WHERE id = ?').get(id);
+    const updatedCustomer = await db.get('SELECT * FROM customers WHERE id = ?', [id]);
     res.json(updatedCustomer);
   } catch (error) {
     console.error('Update customer error:', error);
@@ -188,32 +188,33 @@ router.put('/:id', (req, res) => {
 });
 
 // Delete customer
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   const db = getDb();
   const { id } = req.params;
 
-  const customer = getOwnedCustomer(db, req.userId, id);
+  const customer = await getOwnedCustomer(db, req.userId, id);
   if (!customer) {
     return res.status(404).json({ error: 'Customer not found' });
   }
 
-  db.prepare('UPDATE customers SET status = ?, updated_at = ? WHERE id = ? AND shop_id = ?')
-    .run('deleted', new Date().toISOString(), id, customer.shop_id);
+  await db.run('UPDATE customers SET status = ?, updated_at = ? WHERE id = ? AND shop_id = ?',
+    ['deleted', new Date().toISOString(), id, customer.shop_id]);
   res.json({ success: true });
 });
 
 // Get customer by LINE user ID
-router.get('/by-line/:shopId/:lineUserId', (req, res) => {
+router.get('/by-line/:shopId/:lineUserId', async (req, res) => {
   const db = getDb();
   const { shopId, lineUserId } = req.params;
 
-  if (!requireOwnedShop(req, res, shopId)) {
+  if (!await requireOwnedShop(req, res, shopId)) {
     return;
   }
 
-  const customer = db.prepare(
-    'SELECT * FROM customers WHERE shop_id = ? AND line_user_id = ?'
-  ).get(req.shopId, lineUserId);
+  const customer = await db.get(
+    'SELECT * FROM customers WHERE shop_id = ? AND line_user_id = ?',
+    [req.shopId, lineUserId]
+  );
 
   if (!customer) {
     return res.status(404).json({ error: 'Customer not found' });
@@ -223,18 +224,18 @@ router.get('/by-line/:shopId/:lineUserId', (req, res) => {
 });
 
 // Add order to customer
-router.post('/:id/order', (req, res) => {
+router.post('/:id/order', async (req, res) => {
   const db = getDb();
   const { id } = req.params;
   const { amount } = req.body;
   const now = new Date().toISOString();
 
-  const customer = getOwnedCustomer(db, req.userId, id);
+  const customer = await getOwnedCustomer(db, req.userId, id);
   if (!customer) {
     return res.status(404).json({ error: 'Customer not found' });
   }
 
-  db.prepare(`
+  await db.run(`
     UPDATE customers SET
       total_orders = total_orders + 1,
       total_spent = total_spent + ?,
@@ -242,7 +243,7 @@ router.post('/:id/order', (req, res) => {
       first_order_at = COALESCE(first_order_at, ?),
       updated_at = ?
     WHERE id = ? AND shop_id = ?
-  `).run(amount, now, now, now, id, customer.shop_id);
+  `, [amount, now, now, now, id, customer.shop_id]);
 
   res.json({ success: true });
 });
@@ -273,14 +274,15 @@ router.post('/sync-line', async (req, res) => {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  if (!requireOwnedShop(req, res, shopId)) {
+  if (!await requireOwnedShop(req, res, shopId)) {
     return;
   }
 
   try {
-    let customer = db.prepare(
-      'SELECT * FROM customers WHERE shop_id = ? AND line_user_id = ?'
-    ).get(req.shopId, lineUserId);
+    let customer = await db.get(
+      'SELECT * FROM customers WHERE shop_id = ? AND line_user_id = ?',
+      [req.shopId, lineUserId]
+    );
 
     if (customer) {
       return res.json(customer);
@@ -294,12 +296,12 @@ router.post('/sync-line', async (req, res) => {
     const id = `cust_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const now = new Date().toISOString();
 
-    db.prepare(`
+    await db.run(`
       INSERT INTO customers (
         id, shop_id, line_user_id, name, phone, email,
         address, note, customer_group, status, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'regular', 'active', ?, ?)
-    `).run(
+    `, [
       id, req.shopId, lineUserId,
       lineProfile?.displayName || 'LINE User',
       null,
@@ -308,9 +310,9 @@ router.post('/sync-line', async (req, res) => {
       lineProfile?.statusMessage || null,
       now,
       now
-    );
+    ]);
 
-    customer = db.prepare('SELECT * FROM customers WHERE id = ? AND shop_id = ?').get(id, req.shopId);
+    customer = await db.get('SELECT * FROM customers WHERE id = ? AND shop_id = ?', [id, req.shopId]);
     res.json(customer);
   } catch (error) {
     console.error('Sync LINE customer error:', error);

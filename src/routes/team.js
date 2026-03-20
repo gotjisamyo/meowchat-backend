@@ -7,17 +7,17 @@ const { requireOwnedShop } = require('../middleware/shopAccess');
 
 router.use(authMiddleware);
 
-function getOwnedMember(db, userId, memberId) {
-  return db.prepare(`
+async function getOwnedMember(db, userId, memberId) {
+  return db.get(`
     SELECT tm.*
     FROM team_members tm
     JOIN shops s ON s.id = tm.shop_id
     WHERE tm.id = ? AND s.user_id = ?
-  `).get(memberId, userId);
+  `, [memberId, userId]);
 }
 
 // Get all team members
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const db = getDb();
     const { shopId } = req.query;
@@ -26,13 +26,14 @@ router.get('/', (req, res) => {
       return res.status(400).json({ error: 'shopId is required' });
     }
 
-    if (!requireOwnedShop(req, res, shopId)) {
+    if (!await requireOwnedShop(req, res, shopId)) {
       return;
     }
 
-    const members = db.prepare(
-      'SELECT * FROM team_members WHERE shop_id = ? ORDER BY created_at DESC'
-    ).all(req.shopId);
+    const members = await db.all(
+      'SELECT * FROM team_members WHERE shop_id = ? ORDER BY created_at DESC',
+      [req.shopId]
+    );
     res.json(members);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -40,7 +41,7 @@ router.get('/', (req, res) => {
 });
 
 // Add team member
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const db = getDb();
     const { name, role, email, phone, shopId } = req.body;
@@ -49,16 +50,15 @@ router.post('/', (req, res) => {
       return res.status(400).json({ error: 'shopId and name are required' });
     }
 
-    if (!requireOwnedShop(req, res, shopId)) {
+    if (!await requireOwnedShop(req, res, shopId)) {
       return;
     }
 
-    const stmt = db.prepare(`
+    const result = await db.run(`
       INSERT INTO team_members (name, role, email, phone, shop_id, created_at)
-      VALUES (?, ?, ?, ?, ?, datetime('now'))
-    `);
+      VALUES (?, ?, ?, ?, ?, NOW()) RETURNING id
+    `, [name, role || 'member', email || '', phone || '', req.shopId]);
 
-    const result = stmt.run(name, role || 'member', email || '', phone || '', req.shopId);
     res.json({ id: result.lastInsertRowid, name, role: role || 'member', email, phone, shopId: req.shopId });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -66,23 +66,22 @@ router.post('/', (req, res) => {
 });
 
 // Update team member
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const db = getDb();
     const { name, role, email, phone, status } = req.body;
     const { id } = req.params;
 
-    const member = getOwnedMember(db, req.userId, id);
+    const member = await getOwnedMember(db, req.userId, id);
     if (!member) {
       return res.status(404).json({ error: 'Team member not found' });
     }
 
-    const stmt = db.prepare(`
+    await db.run(`
       UPDATE team_members SET name = ?, role = ?, email = ?, phone = ?, status = ?
       WHERE id = ? AND shop_id = ?
-    `);
+    `, [name, role, email, phone, status, id, member.shop_id]);
 
-    stmt.run(name, role, email, phone, status, id, member.shop_id);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -90,17 +89,17 @@ router.put('/:id', (req, res) => {
 });
 
 // Delete team member
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     const db = getDb();
     const { id } = req.params;
 
-    const member = getOwnedMember(db, req.userId, id);
+    const member = await getOwnedMember(db, req.userId, id);
     if (!member) {
       return res.status(404).json({ error: 'Team member not found' });
     }
 
-    db.prepare('DELETE FROM team_members WHERE id = ? AND shop_id = ?').run(id, member.shop_id);
+    await db.run('DELETE FROM team_members WHERE id = ? AND shop_id = ?', [id, member.shop_id]);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });

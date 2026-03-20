@@ -6,35 +6,35 @@ const { requireOwnedShop } = require('../middleware/shopAccess');
 
 router.use(authMiddleware);
 
-function getOwnedOrder(db, userId, orderId) {
-  return db.prepare(`
+async function getOwnedOrder(db, userId, orderId) {
+  return db.get(`
     SELECT o.*
     FROM orders o
     JOIN shops s ON s.id = o.shop_id
     WHERE o.id = ? AND s.user_id = ?
-  `).get(orderId, userId);
+  `, [orderId, userId]);
 }
 
-function getOwnedProduct(db, userId, productId) {
-  return db.prepare(`
+async function getOwnedProduct(db, userId, productId) {
+  return db.get(`
     SELECT p.*
     FROM products p
     JOIN shops s ON s.id = p.shop_id
     WHERE p.id = ? AND s.user_id = ?
-  `).get(productId, userId);
+  `, [productId, userId]);
 }
 
-function getOwnedCustomer(db, userId, customerId) {
-  return db.prepare(`
+async function getOwnedCustomer(db, userId, customerId) {
+  return db.get(`
     SELECT c.*
     FROM customers c
     JOIN shops s ON s.id = c.shop_id
     WHERE c.id = ? AND s.user_id = ?
-  `).get(customerId, userId);
+  `, [customerId, userId]);
 }
 
 // Create order with inventory deduction
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const db = getDb();
   const {
     shopId, customerId, items, totalAmount,
@@ -45,11 +45,11 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  if (!requireOwnedShop(req, res, shopId)) {
+  if (!await requireOwnedShop(req, res, shopId)) {
     return;
   }
 
-  if (customerId && !getOwnedCustomer(db, req.userId, customerId)) {
+  if (customerId && !await getOwnedCustomer(db, req.userId, customerId)) {
     return res.status(404).json({ error: 'Customer not found' });
   }
 
@@ -62,15 +62,16 @@ router.post('/', (req, res) => {
 
     for (const item of items) {
       const { productId, quantity, price } = item;
-      const product = getOwnedProduct(db, req.userId, productId);
+      const product = await getOwnedProduct(db, req.userId, productId);
 
       if (!product || product.shop_id !== req.shopId) {
         return res.status(404).json({ error: 'Product not found', productId });
       }
 
-      const inventory = db.prepare(
-        'SELECT * FROM inventory WHERE shop_id = ? AND product_id = ?'
-      ).get(req.shopId, productId);
+      const inventory = await db.get(
+        'SELECT * FROM inventory WHERE shop_id = ? AND product_id = ?',
+        [req.shopId, productId]
+      );
 
       if (!inventory || inventory.quantity < quantity) {
         return res.status(400).json({
@@ -80,17 +81,18 @@ router.post('/', (req, res) => {
         });
       }
 
-      db.prepare(
-        'UPDATE inventory SET quantity = quantity - ?, updated_at = ? WHERE id = ?'
-      ).run(quantity, now, inventory.id);
+      await db.run(
+        'UPDATE inventory SET quantity = quantity - ?, updated_at = ? WHERE id = ?',
+        [quantity, now, inventory.id]
+      );
 
       const movId = 'mov_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-      db.prepare(`
+      await db.run(`
         INSERT INTO stock_movements (
           id, inventory_id, product_id, shop_id, type,
           quantity, reference, notes, created_by, created_at
         ) VALUES (?, ?, ?, ?, 'out', ?, ?, ?, 'customer_order', ?)
-      `).run(movId, inventory.id, productId, req.shopId, quantity, orderNumber, note, now);
+      `, [movId, inventory.id, productId, req.shopId, quantity, orderNumber, note, now]);
 
       orderItems.push({
         productId,
@@ -99,35 +101,37 @@ router.post('/', (req, res) => {
         price
       });
 
-      const updatedInv = db.prepare(
-        'SELECT * FROM inventory WHERE id = ?'
-      ).get(inventory.id);
+      const updatedInv = await db.get(
+        'SELECT * FROM inventory WHERE id = ?',
+        [inventory.id]
+      );
 
       if (updatedInv && updatedInv.quantity <= updatedInv.min_stock_level) {
         const alertId = 'alert_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        db.prepare(`
-          INSERT OR IGNORE INTO stock_alerts (
-            id, shop_id, product_id, type, created_at
-          ) VALUES (?, ?, ?, ?, ?)
-        `).run(alertId, req.shopId, productId,
-          updatedInv.quantity <= 0 ? 'out_of_stock' : 'low_stock', now);
+        // INSERT ... ON CONFLICT DO NOTHING instead of INSERT OR IGNORE
+        await db.run(`
+          INSERT INTO stock_alerts (id, shop_id, product_id, type, created_at)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT (id) DO NOTHING
+        `, [alertId, req.shopId, productId,
+          updatedInv.quantity <= 0 ? 'out_of_stock' : 'low_stock', now]);
       }
     }
 
-    db.prepare(`
+    await db.run(`
       INSERT INTO orders (
         id, shop_id, customer_id, order_number, status,
         items, total_amount, payment_method, shipping_address,
         note, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       orderId, req.shopId, customerId, orderNumber, 'completed',
       JSON.stringify(orderItems), totalAmount, paymentMethod,
       shippingAddress, note, now, now
-    );
+    ]);
 
     if (customerId) {
-      db.prepare(`
+      await db.run(`
         UPDATE customers SET
           total_orders = total_orders + 1,
           total_spent = total_spent + ?,
@@ -135,7 +139,7 @@ router.post('/', (req, res) => {
           first_order_at = COALESCE(first_order_at, ?),
           updated_at = ?
         WHERE id = ? AND shop_id = ?
-      `).run(totalAmount, now, now, now, customerId, req.shopId);
+      `, [totalAmount, now, now, now, customerId, req.shopId]);
     }
 
     res.json({
@@ -153,17 +157,17 @@ router.post('/', (req, res) => {
 });
 
 // Get orders for a shop
-router.get('/:shopId', (req, res) => {
+router.get('/:shopId', async (req, res) => {
   const db = getDb();
   const { shopId } = req.params;
   const { customerId, status } = req.query;
 
-  if (!requireOwnedShop(req, res, shopId)) {
+  if (!await requireOwnedShop(req, res, shopId)) {
     return;
   }
 
   if (customerId) {
-    const customer = getOwnedCustomer(db, req.userId, customerId);
+    const customer = await getOwnedCustomer(db, req.userId, customerId);
     if (!customer || customer.shop_id !== req.shopId) {
       return res.status(404).json({ error: 'Customer not found' });
     }
@@ -184,7 +188,7 @@ router.get('/:shopId', (req, res) => {
 
   query += ' ORDER BY created_at DESC LIMIT 50';
 
-  const orders = db.prepare(query).all(...params);
+  const orders = await db.all(query, params);
   const parsedOrders = orders.map(o => ({
     ...o,
     items: JSON.parse(o.items || '[]')
@@ -194,15 +198,15 @@ router.get('/:shopId', (req, res) => {
 });
 
 // Get single order
-router.get('/:shopId/:id', (req, res) => {
+router.get('/:shopId/:id', async (req, res) => {
   const db = getDb();
   const { shopId, id } = req.params;
 
-  if (!requireOwnedShop(req, res, shopId)) {
+  if (!await requireOwnedShop(req, res, shopId)) {
     return;
   }
 
-  const order = getOwnedOrder(db, req.userId, id);
+  const order = await getOwnedOrder(db, req.userId, id);
 
   if (!order || order.shop_id !== req.shopId) {
     return res.status(404).json({ error: 'Order not found' });
@@ -213,25 +217,26 @@ router.get('/:shopId/:id', (req, res) => {
 });
 
 // Update order status
-router.put('/:shopId/:id/status', (req, res) => {
+router.put('/:shopId/:id/status', async (req, res) => {
   const db = getDb();
   const { shopId, id } = req.params;
   const { status } = req.body;
 
-  if (!requireOwnedShop(req, res, shopId)) {
+  if (!await requireOwnedShop(req, res, shopId)) {
     return;
   }
 
-  const order = getOwnedOrder(db, req.userId, id);
+  const order = await getOwnedOrder(db, req.userId, id);
   if (!order || order.shop_id !== req.shopId) {
     return res.status(404).json({ error: 'Order not found' });
   }
 
   const now = new Date().toISOString();
 
-  db.prepare(
-    'UPDATE orders SET status = ?, updated_at = ? WHERE id = ? AND shop_id = ?'
-  ).run(status, now, id, req.shopId);
+  await db.run(
+    'UPDATE orders SET status = ?, updated_at = ? WHERE id = ? AND shop_id = ?',
+    [status, now, id, req.shopId]
+  );
 
   res.json({ success: true });
 });

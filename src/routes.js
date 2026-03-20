@@ -3,7 +3,7 @@ const { authMiddleware } = require('./auth');
 const { requireOwnedShop } = require('./middleware/shopAccess');
 
 function setupRoutes(app) {
-  app.get('/api/dashboard', authMiddleware, (req, res) => {
+  app.get('/api/dashboard', authMiddleware, async (req, res) => {
     try {
       const { shopId } = req.query;
 
@@ -11,18 +11,18 @@ function setupRoutes(app) {
         return res.status(400).json({ success: false, error: 'shopId is required' });
       }
 
-      if (!requireOwnedShop(req, res, shopId)) {
+      if (!await requireOwnedShop(req, res, shopId)) {
         return;
       }
 
-      const stats = getDashboardStats(req.shopId);
+      const stats = await getDashboardStats(req.shopId);
       res.json({ success: true, data: stats });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
     }
   });
 
-  app.get('/api/catalog/products', authMiddleware, (req, res) => {
+  app.get('/api/catalog/products', authMiddleware, async (req, res) => {
     try {
       const { limit, shopId } = req.query;
 
@@ -30,11 +30,11 @@ function setupRoutes(app) {
         return res.status(400).json({ success: false, error: 'shopId is required' });
       }
 
-      if (!requireOwnedShop(req, res, shopId)) {
+      if (!await requireOwnedShop(req, res, shopId)) {
         return;
       }
 
-      const products = getProducts({
+      const products = await getProducts({
         shopId: req.shopId,
         limit: limit ? parseInt(limit, 10) : 50
       });
@@ -44,9 +44,9 @@ function setupRoutes(app) {
     }
   });
 
-  app.get('/api/users/:lineId', authMiddleware, (req, res) => {
+  app.get('/api/users/:lineId', authMiddleware, async (req, res) => {
     try {
-      const user = getUser(req.params.lineId);
+      const user = await getUser(req.params.lineId);
 
       if (!user || String(user.id) !== String(req.userId)) {
         return res.status(404).json({ success: false, error: 'User not found' });

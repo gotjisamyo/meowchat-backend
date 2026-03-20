@@ -6,23 +6,9 @@ const { requireOwnedShop } = require('../middleware/shopAccess');
 
 router.use(authMiddleware);
 
-function ensureColumn(db, table, column, definition) {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
-  if (!columns.some(col => col.name === column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-  }
-}
+// shop_id columns are now added in initDatabase() via ADD COLUMN IF NOT EXISTS
 
-function initMarketingTenantColumns() {
-  const db = getDb();
-  ensureColumn(db, 'marketing_campaigns', 'shop_id', 'TEXT');
-  ensureColumn(db, 'marketing_automations', 'shop_id', 'TEXT');
-  ensureColumn(db, 'marketing_scheduled', 'shop_id', 'TEXT');
-}
-
-initMarketingTenantColumns();
-
-function requireMarketingShop(req, res) {
+async function requireMarketingShop(req, res) {
   const shopId = req.params.shopId || req.query.shopId || req.body.shopId;
   if (!shopId) {
     res.status(400).json({ error: 'shopId is required' });
@@ -31,41 +17,42 @@ function requireMarketingShop(req, res) {
   return requireOwnedShop(req, res, shopId);
 }
 
-function getOwnedCustomer(db, userId, customerId) {
-  return db.prepare(`
+async function getOwnedCustomer(db, userId, customerId) {
+  return db.get(`
     SELECT c.*
     FROM customers c
     JOIN shops s ON s.id = c.shop_id
     WHERE c.id = ? AND s.user_id = ?
-  `).get(customerId, userId);
+  `, [customerId, userId]);
 }
 
-router.get('/campaigns', (req, res) => {
+router.get('/campaigns', async (req, res) => {
   try {
-    if (!requireMarketingShop(req, res)) return;
+    if (!await requireMarketingShop(req, res)) return;
     const db = getDb();
-    const campaigns = db.prepare(
-      'SELECT * FROM marketing_campaigns WHERE shop_id = ? ORDER BY created_at DESC'
-    ).all(req.shopId);
+    const campaigns = await db.all(
+      'SELECT * FROM marketing_campaigns WHERE shop_id = ? ORDER BY created_at DESC',
+      [req.shopId]
+    );
     res.json(campaigns);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-router.post('/campaigns', (req, res) => {
+router.post('/campaigns', async (req, res) => {
   try {
     const { shopId, name, type, trigger, steps } = req.body;
     if (!shopId || !name) {
       return res.status(400).json({ error: 'shopId and name are required' });
     }
-    if (!requireOwnedShop(req, res, shopId)) return;
+    if (!await requireOwnedShop(req, res, shopId)) return;
 
     const db = getDb();
-    const result = db.prepare(`
+    const result = await db.run(`
       INSERT INTO marketing_campaigns (shop_id, name, type, trigger, steps, status)
-      VALUES (?, ?, ?, ?, ?, 'active')
-    `).run(req.shopId, name, type || 'auto', trigger || 'signup', JSON.stringify(steps || []));
+      VALUES (?, ?, ?, ?, ?, 'active') RETURNING id
+    `, [req.shopId, name, type || 'auto', trigger || 'signup', JSON.stringify(steps || [])]);
 
     res.json({ success: true, id: result.lastInsertRowid });
   } catch (error) {
@@ -85,24 +72,24 @@ router.get('/templates', (req, res) => {
   res.json(templates);
 });
 
-router.post('/apply-template', (req, res) => {
+router.post('/apply-template', async (req, res) => {
   try {
     const { shopId, templateId, customerId, channel } = req.body;
     if (!shopId || !templateId || !customerId) {
       return res.status(400).json({ error: 'shopId, templateId and customerId are required' });
     }
-    if (!requireOwnedShop(req, res, shopId)) return;
+    if (!await requireOwnedShop(req, res, shopId)) return;
 
     const db = getDb();
-    const customer = getOwnedCustomer(db, req.userId, customerId);
+    const customer = await getOwnedCustomer(db, req.userId, customerId);
     if (!customer || customer.shop_id !== req.shopId) {
       return res.status(404).json({ error: 'Customer not found' });
     }
 
-    const result = db.prepare(`
+    const result = await db.run(`
       INSERT INTO marketing_automations (shop_id, customer_id, template_id, channel, status, next_send)
-      VALUES (?, ?, ?, ?, 'active', datetime('now'))
-    `).run(req.shopId, customerId, templateId, channel || 'line');
+      VALUES (?, ?, ?, ?, 'active', NOW()) RETURNING id
+    `, [req.shopId, customerId, templateId, channel || 'line']);
 
     res.json({ success: true, id: result.lastInsertRowid });
   } catch (error) {
@@ -110,24 +97,24 @@ router.post('/apply-template', (req, res) => {
   }
 });
 
-router.post('/schedule', (req, res) => {
+router.post('/schedule', async (req, res) => {
   try {
     const { shopId, customerId, message, sendAt, channel } = req.body;
     if (!shopId || !customerId || !message || !sendAt) {
       return res.status(400).json({ error: 'shopId, customerId, message and sendAt are required' });
     }
-    if (!requireOwnedShop(req, res, shopId)) return;
+    if (!await requireOwnedShop(req, res, shopId)) return;
 
     const db = getDb();
-    const customer = getOwnedCustomer(db, req.userId, customerId);
+    const customer = await getOwnedCustomer(db, req.userId, customerId);
     if (!customer || customer.shop_id !== req.shopId) {
       return res.status(404).json({ error: 'Customer not found' });
     }
 
-    const result = db.prepare(`
+    const result = await db.run(`
       INSERT INTO marketing_scheduled (shop_id, customer_id, message, send_at, channel, status)
-      VALUES (?, ?, ?, ?, ?, 'pending')
-    `).run(req.shopId, customerId, message, sendAt, channel || 'line');
+      VALUES (?, ?, ?, ?, ?, 'pending') RETURNING id
+    `, [req.shopId, customerId, message, sendAt, channel || 'line']);
 
     res.json({ success: true, id: result.lastInsertRowid });
   } catch (error) {
@@ -135,20 +122,20 @@ router.post('/schedule', (req, res) => {
   }
 });
 
-router.get('/scheduled/:customerId', (req, res) => {
+router.get('/scheduled/:customerId', async (req, res) => {
   try {
-    if (!requireMarketingShop(req, res)) return;
+    if (!await requireMarketingShop(req, res)) return;
     const db = getDb();
-    const customer = getOwnedCustomer(db, req.userId, req.params.customerId);
+    const customer = await getOwnedCustomer(db, req.userId, req.params.customerId);
     if (!customer || customer.shop_id !== req.shopId) {
       return res.status(404).json({ error: 'Customer not found' });
     }
 
-    const messages = db.prepare(`
+    const messages = await db.all(`
       SELECT * FROM marketing_scheduled
       WHERE shop_id = ? AND customer_id = ? AND status = 'pending'
       ORDER BY send_at ASC
-    `).all(req.shopId, req.params.customerId);
+    `, [req.shopId, req.params.customerId]);
 
     res.json(messages);
   } catch (error) {
@@ -156,13 +143,13 @@ router.get('/scheduled/:customerId', (req, res) => {
   }
 });
 
-router.post('/broadcast', (req, res) => {
+router.post('/broadcast', async (req, res) => {
   try {
     const { shopId, message, filter } = req.body;
     if (!shopId || !message) {
       return res.status(400).json({ error: 'shopId and message are required' });
     }
-    if (!requireOwnedShop(req, res, shopId)) return;
+    if (!await requireOwnedShop(req, res, shopId)) return;
 
     const db = getDb();
     let query = "SELECT id FROM customers WHERE shop_id = ? AND status = 'active'";
@@ -173,13 +160,14 @@ router.post('/broadcast', (req, res) => {
       params.push(filter.group);
     }
 
-    const customers = db.prepare(query).all(...params);
-    const insertStmt = db.prepare(`
-      INSERT INTO marketing_scheduled (shop_id, customer_id, message, send_at, channel, status)
-      VALUES (?, ?, ?, datetime('now'), 'line', 'pending')
-    `);
+    const customers = await db.all(query, params);
 
-    customers.forEach(customer => insertStmt.run(req.shopId, customer.id, message));
+    for (const customer of customers) {
+      await db.run(`
+        INSERT INTO marketing_scheduled (shop_id, customer_id, message, send_at, channel, status)
+        VALUES (?, ?, ?, NOW(), 'line', 'pending')
+      `, [req.shopId, customer.id, message]);
+    }
 
     res.json({ success: true, count: customers.length, message: `ส่งถึง ${customers.length} คนแล้วค่ะ!` });
   } catch (error) {
@@ -187,17 +175,29 @@ router.post('/broadcast', (req, res) => {
   }
 });
 
-router.get('/stats', (req, res) => {
+router.get('/stats', async (req, res) => {
   try {
-    if (!requireMarketingShop(req, res)) return;
+    if (!await requireMarketingShop(req, res)) return;
     const db = getDb();
 
-    const totalCampaigns = db.prepare('SELECT COUNT(*) as count FROM marketing_campaigns WHERE shop_id = ?').get(req.shopId).count;
-    const activeAutomations = db.prepare("SELECT COUNT(*) as count FROM marketing_automations WHERE shop_id = ? AND status = 'active'").get(req.shopId).count;
-    const pendingMessages = db.prepare("SELECT COUNT(*) as count FROM marketing_scheduled WHERE shop_id = ? AND status = 'pending'").get(req.shopId).count;
-    const sentMessages = db.prepare("SELECT COUNT(*) as count FROM marketing_scheduled WHERE shop_id = ? AND status = 'sent'").get(req.shopId).count;
+    const [
+      { count: totalCampaigns },
+      { count: activeAutomations },
+      { count: pendingMessages },
+      { count: sentMessages }
+    ] = await Promise.all([
+      db.get('SELECT COUNT(*) as count FROM marketing_campaigns WHERE shop_id = ?', [req.shopId]),
+      db.get("SELECT COUNT(*) as count FROM marketing_automations WHERE shop_id = ? AND status = 'active'", [req.shopId]),
+      db.get("SELECT COUNT(*) as count FROM marketing_scheduled WHERE shop_id = ? AND status = 'pending'", [req.shopId]),
+      db.get("SELECT COUNT(*) as count FROM marketing_scheduled WHERE shop_id = ? AND status = 'sent'", [req.shopId]),
+    ]);
 
-    res.json({ totalCampaigns, activeAutomations, pendingMessages, sentMessages });
+    res.json({
+      totalCampaigns: Number(totalCampaigns) || 0,
+      activeAutomations: Number(activeAutomations) || 0,
+      pendingMessages: Number(pendingMessages) || 0,
+      sentMessages: Number(sentMessages) || 0
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
