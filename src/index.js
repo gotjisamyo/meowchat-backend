@@ -12,7 +12,12 @@ const { requireOwnedShop } = require('./middleware/shopAccess');
 const app = express();
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production'
+    ? [process.env.FRONTEND_URL || 'https://app.meowchat.store', 'https://meowchat.store']
+    : true,
+  credentials: true
+}));
 app.use(express.json({
   verify: (req, res, buf) => {
     if (req.originalUrl.startsWith('/api/billing/webhook')) {
