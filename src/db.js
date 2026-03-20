@@ -2,7 +2,8 @@ const { Pool } = require('pg');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  // Railway PostgreSQL always requires SSL; rejectUnauthorized:false accepts self-signed certs
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
 });
 
 // Convert ? placeholders to $1, $2, ...

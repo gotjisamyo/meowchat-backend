@@ -115,7 +115,7 @@ app.listen(PORT, () => {
 initDatabase()
   .then(() => { dbReady = true; })
   .catch(err => {
-    console.error('❌ DB init failed:', err.message);
+    console.error('❌ DB init failed:', err.message || err.code || String(err));
     // Don't exit — let the process stay up so Railway doesn't loop-restart
   });
 
