@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const line = require('@line/bot-sdk');
 const { initDatabase } = require('./db');
 const { handleLineEvent } = require('./lineHandler');
@@ -10,6 +11,9 @@ const { authMiddleware } = require('./auth');
 const { requireOwnedShop } = require('./middleware/shopAccess');
 
 const app = express();
+
+// Security headers
+app.use(helmet());
 
 // Middleware
 app.use(cors({

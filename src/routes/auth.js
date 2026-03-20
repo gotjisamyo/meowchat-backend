@@ -1,11 +1,21 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const rateLimit = require('express-rate-limit');
 const { getDb } = require('../db');
 const { generateToken, authMiddleware } = require('../auth');
 
 const router = express.Router();
 
-router.post('/register', async (req, res) => {
+// Max 10 attempts per 15 minutes per IP
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts', message: 'ลองใหม่อีกครั้งใน 15 นาที' },
+});
+
+router.post('/register', authLimiter, async (req, res) => {
   try {
     const { email, password, name } = req.body;
 
@@ -13,6 +23,13 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({
         error: 'Missing required fields',
         message: 'กรุณากรอกข้อมูลให้ครบถ้วน'
+      });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        error: 'Password too short',
+        message: 'รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร'
       });
     }
 
@@ -52,7 +69,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-router.post('/login', async (req, res) => {
+router.post('/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 
