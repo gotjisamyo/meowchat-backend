@@ -36,19 +36,23 @@ const lineConfig = {
 // Initialize database
 initDatabase();
 
-// LINE webhook handler
-app.post('/webhook', line.middleware(lineConfig), async (req, res) => {
-  try {
-    const events = req.body.events;
-    const results = await Promise.all(
-      events.map(event => handleLineEvent(event, lineConfig))
-    );
-    res.json({ success: true, results });
-  } catch (error) {
-    console.error('Webhook error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+// LINE webhook handler (only register if credentials are provided)
+if (lineConfig.channelAccessToken && lineConfig.channelSecret) {
+  app.post('/webhook', line.middleware(lineConfig), async (req, res) => {
+    try {
+      const events = req.body.events;
+      const results = await Promise.all(
+        events.map(event => handleLineEvent(event, lineConfig))
+      );
+      res.json({ success: true, results });
+    } catch (error) {
+      console.error('Webhook error:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+} else {
+  console.log('LINE credentials not configured - webhook disabled');
+}
 
 // Health check
 app.get('/health', (req, res) => {
