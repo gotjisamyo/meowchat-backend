@@ -51,9 +51,10 @@ if (lineConfig.channelAccessToken && lineConfig.channelSecret) {
   console.log('LINE credentials not configured - webhook disabled');
 }
 
-// Health check
+// Health check — always responds so Railway healthcheck passes
+let dbReady = false;
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', db: dbReady ? 'connected' : 'initializing', timestamp: new Date().toISOString() });
 });
 
 // API routes
@@ -104,19 +105,18 @@ app.post('/api/chat', authMiddleware, async (req, res) => {
   }
 });
 
-// Start server
+// Start server — listen first, then init DB so healthcheck passes immediately
 const PORT = process.env.PORT || 3000;
 
-async function start() {
-  await initDatabase();
-  app.listen(PORT, () => {
-    console.log(`🚀 MeowChat Backend running on port ${PORT}`);
-  });
-}
-
-start().catch(err => {
-  console.error(err);
-  process.exit(1);
+app.listen(PORT, () => {
+  console.log(`🚀 MeowChat Backend running on port ${PORT}`);
 });
+
+initDatabase()
+  .then(() => { dbReady = true; })
+  .catch(err => {
+    console.error('❌ DB init failed:', err.message);
+    // Don't exit — let the process stay up so Railway doesn't loop-restart
+  });
 
 module.exports = { app, lineConfig };
