@@ -16,9 +16,24 @@ const app = express();
 app.use(helmet());
 
 // Middleware
+const allowedOrigins = [
+  'https://app.meowchat.store',
+  'https://meowchat.store',
+  'https://meowchat-admin-dashboard.vercel.app',
+  process.env.FRONTEND_URL,
+  process.env.ADMIN_URL,
+].filter(Boolean);
+
 app.use(cors({
   origin: process.env.NODE_ENV === 'production'
-    ? [process.env.FRONTEND_URL || 'https://app.meowchat.store', 'https://meowchat.store']
+    ? (origin, cb) => {
+        // allow requests with no origin (mobile apps, curl) or matching origins
+        if (!origin || allowedOrigins.some(o => origin.startsWith(o))) {
+          cb(null, true);
+        } else {
+          cb(new Error(`CORS blocked: ${origin}`));
+        }
+      }
     : true,
   credentials: true
 }));
