@@ -62,7 +62,15 @@ const lineConfig = {
 
 // LINE webhook handler (only register if credentials are provided)
 if (lineConfig.channelAccessToken && lineConfig.channelSecret) {
-  app.post('/api/line/webhook', line.middleware(lineConfig), async (req, res) => {
+  app.post('/api/line/webhook', (req, res, next) => {
+    line.middleware(lineConfig)(req, res, (err) => {
+      if (err) {
+        console.error('LINE signature validation error:', err.message);
+        return res.status(200).json({ success: false, error: 'signature_invalid' });
+      }
+      next();
+    });
+  }, async (req, res) => {
     try {
       const events = req.body.events;
       const results = await Promise.all(
@@ -71,7 +79,7 @@ if (lineConfig.channelAccessToken && lineConfig.channelSecret) {
       res.json({ success: true, results });
     } catch (error) {
       console.error('Webhook error:', error);
-      res.status(500).json({ success: false, error: error.message });
+      res.status(200).json({ success: false, error: error.message });
     }
   });
 } else {
