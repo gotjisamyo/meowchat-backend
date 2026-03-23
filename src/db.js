@@ -330,6 +330,24 @@ async function initDatabase() {
     )
   `);
 
+  // Handoffs table — human handoff requests
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS handoffs (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      customer_id TEXT,
+      line_user_id TEXT,
+      customer_name TEXT,
+      message TEXT,
+      status TEXT DEFAULT 'pending',
+      resolved_at TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_handoffs_shop_id ON handoffs(shop_id)`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_handoffs_status ON handoffs(status)`);
+
   // Usage tracking table
   await db.exec(`
     CREATE TABLE IF NOT EXISTS usage_tracking (
@@ -359,14 +377,15 @@ async function initDatabase() {
     await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_stripe_subscription ON subscriptions(stripe_subscription_id)`);
   } catch (e) { /* ignore if already exists */ }
 
-  // Seed plans data
+  // Seed plans data (use OVERRIDING SYSTEM VALUE to set explicit ids for SERIAL column)
   await db.exec(`
     INSERT INTO plans (id, name, price, max_chats, max_agents, features, is_active)
+    OVERRIDING SYSTEM VALUE
     VALUES
-      (0, 'Free', 0, 300, 1, '["ใช้งานได้ 1 Bot","300 ข้อความ/เดือน","รองรับ LINE Bot","สถิติพื้นฐาน"]', 1),
-      (1, 'Starter', 390, 3000, 1, '["ใช้งานได้ 1 Bot","3,000 ข้อความ/เดือน","รองรับ LINE Bot","สถิติพื้นฐาน","สนับสนุนทาง Email"]', 1),
-      (2, 'Pro', 590, 15000, 3, '["ใช้งานได้ 3 Bots","15,000 ข้อความ/เดือน","รองรับ LINE Bot","สถิติขั้นสูง","AI Auto Reply","สนับสนุนทาง Email & Chat"]', 1),
-      (3, 'Enterprise', 3900, -1, -1, '["ใช้งานได้ไม่จำกัด Bots","ข้อความไม่จำกัด","รองรับ LINE Bot & Multi-channel","สถิติขั้นสูง & Analytics","AI Auto Reply","API Access","ลำดับชั้นผู้ใช้งาน","สนับสนุน 24/7"]', 1)
+      (1, 'Free', 0, 300, 1, '["ใช้งานได้ 1 Bot","300 ข้อความ/เดือน","รองรับ LINE Bot","สถิติพื้นฐาน"]', 1),
+      (2, 'Starter', 390, 3000, 1, '["ใช้งานได้ 1 Bot","3,000 ข้อความ/เดือน","รองรับ LINE Bot","สถิติพื้นฐาน","สนับสนุนทาง Email"]', 1),
+      (3, 'Pro', 590, 15000, 3, '["ใช้งานได้ 3 Bots","15,000 ข้อความ/เดือน","รองรับ LINE Bot","สถิติขั้นสูง","AI Auto Reply","สนับสนุนทาง Email & Chat"]', 1),
+      (4, 'Enterprise', 3900, -1, -1, '["ใช้งานได้ไม่จำกัด Bots","ข้อความไม่จำกัด","รองรับ LINE Bot & Multi-channel","สถิติขั้นสูง & Analytics","AI Auto Reply","API Access","ลำดับชั้นผู้ใช้งาน","สนับสนุน 24/7"]', 1)
     ON CONFLICT (id) DO UPDATE SET
       name = excluded.name,
       price = excluded.price,

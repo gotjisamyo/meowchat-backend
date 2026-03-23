@@ -2,8 +2,32 @@ const express = require('express');
 const { getDb } = require('../db');
 const https = require('https');
 const crypto = require('crypto');
+const axios = require('axios');
 
 const router = express.Router();
+
+// Helper: send LINE push message
+async function sendLinePushMessage(accessToken, userId, message) {
+  try {
+    await axios.post(
+      'https://api.line.me/v2/bot/message/push',
+      {
+        to: userId,
+        messages: [{ type: 'text', text: message }]
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`
+        }
+      }
+    );
+    return true;
+  } catch (err) {
+    console.error('LINE push error:', err.response?.data || err.message);
+    return false;
+  }
+}
 
 // Helper: generate shop ID
 function generateId() {
@@ -249,6 +273,198 @@ router.get('/:botId/conversations', async (req, res) => {
   } catch (error) {
     console.error('Get conversations error:', error);
     res.status(500).json({ error: 'Server error', message: 'เกิดข้อผิดพลาด' });
+  }
+});
+
+// POST /api/bots/:botId/handoff — request human handoff
+router.post('/:botId/handoff', async (req, res) => {
+  try {
+    const db = getDb();
+    const { botId } = req.params;
+    const { customerName, lineUserId, message } = req.body;
+
+    // Verify ownership
+    const shop = await db.get(
+      'SELECT id, name, line_access_token, line_channel_id FROM shops WHERE id = ? AND user_id = ?',
+      [botId, req.userId]
+    );
+
+    if (!shop) {
+      return res.status(404).json({ error: 'Bot not found', message: 'ไม่พบ bot' });
+    }
+
+    // Create handoff record
+    const handoffId = crypto.randomBytes(8).toString('hex');
+    await db.run(`
+      INSERT INTO handoffs (id, shop_id, line_user_id, customer_name, message, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [handoffId, botId, lineUserId || null, customerName || 'ลูกค้า', message || '']);
+
+    // Send LINE push notification to bot owner if line_access_token + line_channel_id available
+    if (shop.line_access_token && shop.line_channel_id) {
+      const notifyMsg = `🔔 แจ้งเตือน: มีลูกค้าต้องการคุยกับคุณ!\n\nชื่อ: ${customerName || 'ลูกค้า'}\nร้าน: ${shop.name}\n${message ? `ข้อความ: ${message}` : ''}\n\nกรุณาตอบกลับลูกค้าโดยเร็ว`;
+      await sendLinePushMessage(shop.line_access_token, shop.line_channel_id, notifyMsg);
+    }
+
+    res.json({
+      success: true,
+      handoffId,
+      message: 'กำลังติดต่อเจ้าหน้าที่'
+    });
+  } catch (error) {
+    console.error('Handoff error:', error);
+    res.status(500).json({ error: 'Server error', message: 'เกิดข้อผิดพลาด: ' + error.message });
+  }
+});
+
+// GET /api/bots/:botId/handoffs — list pending handoff requests
+router.get('/:botId/handoffs', async (req, res) => {
+  try {
+    const db = getDb();
+    const { botId } = req.params;
+    const { status } = req.query;
+
+    // Verify ownership
+    const bot = await db.get(
+      'SELECT id FROM shops WHERE id = ? AND user_id = ?',
+      [botId, req.userId]
+    );
+
+    if (!bot) {
+      return res.status(404).json({ error: 'Bot not found', message: 'ไม่พบ bot' });
+    }
+
+    const statusFilter = status || 'pending';
+    const handoffs = await db.all(`
+      SELECT h.id, h.shop_id, h.line_user_id, h.customer_name, h.message,
+             h.status, h.resolved_at, h.created_at, h.updated_at
+      FROM handoffs h
+      WHERE h.shop_id = ? AND h.status = ?
+      ORDER BY h.created_at DESC
+      LIMIT 50
+    `, [botId, statusFilter]);
+
+    res.json({ handoffs, botId, status: statusFilter });
+  } catch (error) {
+    console.error('Get handoffs error:', error);
+    res.status(500).json({ error: 'Server error', message: 'เกิดข้อผิดพลาด' });
+  }
+});
+
+// PATCH /api/bots/:botId/handoffs/:handoffId — resolve a handoff
+router.patch('/:botId/handoffs/:handoffId', async (req, res) => {
+  try {
+    const db = getDb();
+    const { botId, handoffId } = req.params;
+
+    const bot = await db.get(
+      'SELECT id FROM shops WHERE id = ? AND user_id = ?',
+      [botId, req.userId]
+    );
+
+    if (!bot) {
+      return res.status(404).json({ error: 'Bot not found', message: 'ไม่พบ bot' });
+    }
+
+    await db.run(`
+      UPDATE handoffs
+      SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND shop_id = ?
+    `, [handoffId, botId]);
+
+    res.json({ success: true, message: 'Handoff resolved' });
+  } catch (error) {
+    console.error('Resolve handoff error:', error);
+    res.status(500).json({ error: 'Server error', message: 'เกิดข้อผิดพลาด' });
+  }
+});
+
+// POST /api/bots/:botId/simulate — test bot without going through LINE
+router.post('/:botId/simulate', async (req, res) => {
+  try {
+    const db = getDb();
+    const { botId } = req.params;
+    const { message } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ error: 'message is required' });
+    }
+
+    // Verify ownership
+    const shop = await db.get(
+      'SELECT id, name, description FROM shops WHERE id = ? AND user_id = ?',
+      [botId, req.userId]
+    );
+
+    if (!shop) {
+      return res.status(404).json({ error: 'Bot not found', message: 'ไม่พบ bot' });
+    }
+
+    // Parse shop description for business info
+    let shopInfo = {};
+    try {
+      shopInfo = JSON.parse(shop.description || '{}');
+    } catch (e) {
+      shopInfo = {};
+    }
+
+    // Get products for context
+    const products = await db.all(
+      "SELECT name, price, description, stock FROM products WHERE shop_id = ? AND status = 'active' LIMIT 20",
+      [botId]
+    );
+
+    let productList = '';
+    if (products && products.length > 0) {
+      productList = '\n\n📦 สินค้าของร้าน:\n' + products.map((p, i) =>
+        `${i + 1}. ${p.name} - ฿${p.price}${p.stock > 0 ? ` (มี ${p.stock} ชิ้น)` : ' (หมด)'}${p.description ? ` - ${p.description}` : ''}`
+      ).join('\n');
+    }
+
+    // If Gemini API key available — use it
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        const systemPrompt = `คุณเป็น AI ผู้ช่วยของร้าน "${shop.name || 'ร้านค้า'}"
+ประเภทธุรกิจ: ${shopInfo.businessType || 'ทั่วไป'}
+ข้อมูลร้าน: ${shopInfo.shopName || shop.name || ''} ${shopInfo.phone ? `โทร: ${shopInfo.phone}` : ''} ${shopInfo.openHours ? `เวลาเปิด: ${shopInfo.openHours}` : ''}
+บุคลิก: ${shopInfo.botStyle || 'friendly'}
+${shopInfo.aiCustomKnowledge ? `ข้อมูลเพิ่มเติม: ${shopInfo.aiCustomKnowledge}` : ''}
+${productList}
+
+ตอบภาษาไทย กระชับ เป็นมิตร ไม่เกิน 3-4 ประโยค`;
+
+        const geminiRes = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+          {
+            contents: [{ parts: [{ text: systemPrompt + '\n\nUser: ' + message }] }],
+            generationConfig: { temperature: 0.7, maxOutputTokens: 512 }
+          }
+        );
+
+        const reply = geminiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (reply) {
+          return res.json({ reply, source: 'ai' });
+        }
+      } catch (geminiErr) {
+        console.error('Gemini simulate error:', geminiErr.response?.data || geminiErr.message);
+      }
+    }
+
+    // Fallback: mock reply using shop info
+    const shopName = shopInfo.shopName || shop.name || 'ร้านค้า';
+    const greet = `สวัสดีครับ! ยินดีต้อนรับสู่ ${shopName} 😊`;
+    let mockReply = greet;
+
+    if (products && products.length > 0) {
+      mockReply += `\n\nเรามีสินค้าให้เลือก ${products.length} รายการ เช่น ${products.slice(0, 3).map(p => p.name).join(', ')} มีอะไรให้ช่วยไหมครับ?`;
+    } else {
+      mockReply += '\n\nมีอะไรให้ช่วยไหมครับ? สอบถามข้อมูลสินค้าหรือบริการได้เลยนะครับ 🙏';
+    }
+
+    res.json({ reply: mockReply, source: 'mock' });
+  } catch (error) {
+    console.error('Simulate error:', error);
+    res.status(500).json({ error: 'Server error', message: 'เกิดข้อผิดพลาด: ' + error.message });
   }
 });
 
