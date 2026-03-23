@@ -54,7 +54,7 @@ const lineConfig = {
 
 // LINE webhook handler (only register if credentials are provided)
 if (lineConfig.channelAccessToken && lineConfig.channelSecret) {
-  app.post('/webhook', line.middleware(lineConfig), async (req, res) => {
+  app.post('/api/line/webhook', line.middleware(lineConfig), async (req, res) => {
     try {
       const events = req.body.events;
       const results = await Promise.all(
@@ -95,6 +95,12 @@ app.use('/api/team', require('./routes/team'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/payment', require('./routes/payment'));
 app.use('/api/admin', require('./routes/admin'));
+
+// Merchant dashboard routes
+const botsRouter = require('./routes/bots');
+const usageRouter = require('./routes/usage');
+app.use('/api/bots', authMiddleware, botsRouter);
+app.use('/api/usage', authMiddleware, usageRouter);
 
 // Chat API - Direct
 const { processUserMessage } = require('./agent');
