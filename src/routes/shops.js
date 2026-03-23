@@ -58,6 +58,16 @@ router.post('/', authMiddleware, async (req, res) => {
       lineAccessToken || ''
     ]);
 
+    // Assign Free plan subscription to new shop
+    try {
+      await db.run(`
+        INSERT INTO subscriptions (shop_id, plan_id, status, payment_method, payment_status)
+        VALUES (?, 0, 'active', 'free', 'paid')
+      `, [shopId]);
+    } catch (subErr) {
+      console.error('Create subscription error (non-fatal):', subErr.message);
+    }
+
     // Get the created shop
     const shop = await db.get('SELECT * FROM shops WHERE id = ?', [shopId]);
 

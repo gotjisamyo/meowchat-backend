@@ -17,10 +17,10 @@ router.get('/', async (req, res) => {
     if (shops.length === 0) {
       return res.json({
         messages_used: 0,
-        messages_limit: 0,
+        messages_limit: 300,
         bots_count: 0,
-        bots_limit: 0,
-        plan: 'free',
+        bots_limit: 1,
+        plan: 'Free',
         period_start: null,
         period_end: null,
         shops: []
@@ -53,7 +53,7 @@ router.get('/', async (req, res) => {
 
     res.json({
       messages_used: Number(usage.total_chats) || 0,
-      messages_limit: subscription ? Number(subscription.max_chats) : 0,
+      messages_limit: subscription ? Number(subscription.max_chats) : 300,
       bots_count: shopIds.length,
       bots_limit: subscription ? Number(subscription.max_agents) : 1,
       plan: subscription ? subscription.plan_name : 'free',
