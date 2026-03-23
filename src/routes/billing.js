@@ -625,7 +625,7 @@ function setupBillingRoutes(app) {
 
   app.post('/api/billing/webhook', handleStripeWebhook);
 
-  app.get('/api/plans', authMiddleware, async (req, res) => {
+  app.get('/api/plans', async (req, res) => {
     try {
       const plans = await getPlans();
       res.json({ success: true, data: plans });
@@ -647,56 +647,6 @@ function setupBillingRoutes(app) {
       });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
-    }
-  });
-
-  app.post('/api/billing/checkout-session', authMiddleware, async (req, res) => {
-    try {
-      const { planId, successUrl, cancelUrl, customerEmail } = req.body;
-      const shop = await resolveOwnedShopFromRequest(req, res);
-      if (!shop) return;
-
-      const data = await createCheckoutSessionResponse({
-        shop,
-        planId,
-        successUrl,
-        cancelUrl,
-        customerEmail: customerEmail || req.user?.email
-      });
-
-      res.json({ success: true, data });
-    } catch (error) {
-      console.error('Create checkout session error:', error);
-      const statusCode = error.message === 'Plan not found' ? 404 : 400;
-      res.status(statusCode).json({ success: false, error: error.message });
-    }
-  });
-
-  app.post('/api/billing/subscribe', authMiddleware, async (req, res) => {
-    try {
-      const { planId, successUrl, cancelUrl, customerEmail } = req.body;
-      const shop = await resolveOwnedShopFromRequest(req, res);
-      if (!shop) return;
-
-      const data = await createCheckoutSessionResponse({
-        shop,
-        planId,
-        successUrl,
-        cancelUrl,
-        customerEmail: customerEmail || req.user?.email
-      });
-
-      res.json({
-        success: true,
-        data: {
-          ...data,
-          message: 'Stripe checkout session created successfully'
-        }
-      });
-    } catch (error) {
-      console.error('Create subscription checkout error:', error);
-      const statusCode = error.message === 'Plan not found' ? 404 : 400;
-      res.status(statusCode).json({ success: false, error: error.message });
     }
   });
 
