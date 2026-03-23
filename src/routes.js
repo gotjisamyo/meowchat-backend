@@ -1,14 +1,19 @@
-const { getDashboardStats, getProducts, getUser } = require('./db');
+const { getDashboardStats, getProducts, getUser, getShopsByUserId } = require('./db');
 const { authMiddleware } = require('./auth');
 const { requireOwnedShop } = require('./middleware/shopAccess');
 
 function setupRoutes(app) {
   app.get('/api/dashboard', authMiddleware, async (req, res) => {
     try {
-      const { shopId } = req.query;
+      let { shopId } = req.query;
 
+      // Auto-resolve shopId from user's first shop if not provided
       if (!shopId) {
-        return res.status(400).json({ success: false, error: 'shopId is required' });
+        const userShops = await getShopsByUserId(req.userId);
+        if (!userShops || userShops.length === 0) {
+          return res.status(404).json({ success: false, error: 'ไม่พบร้านค้าของคุณ กรุณาสร้างร้านค้าก่อน' });
+        }
+        shopId = userShops[0].id;
       }
 
       if (!await requireOwnedShop(req, res, shopId)) {

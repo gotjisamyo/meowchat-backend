@@ -377,6 +377,9 @@ async function initDatabase() {
     await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_stripe_subscription ON subscriptions(stripe_subscription_id)`);
   } catch (e) { /* ignore if already exists */ }
 
+  // Cleanup: remove legacy id=0 Free plan if it exists (duplicate from old seed)
+  await db.exec(`DELETE FROM plans WHERE id = 0`);
+
   // Seed plans data (use OVERRIDING SYSTEM VALUE to set explicit ids for SERIAL column)
   await db.exec(`
     INSERT INTO plans (id, name, price, max_chats, max_agents, features, is_active)
