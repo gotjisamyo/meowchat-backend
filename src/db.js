@@ -351,10 +351,17 @@ async function initDatabase() {
   await db.exec(`
     INSERT INTO plans (id, name, price, max_chats, max_agents, features, is_active)
     VALUES
-      (1, 'Starter', 999, 500, 1, '["ใช้งานได้ 1 Agent","500 ข้อความ/เดือน","รองรับ LINE Bot","สถิติพื้นฐาน","สนับสนุนทาง Email"]', 1),
-      (2, 'Pro', 2999, 5000, 5, '["ใช้งานได้ 5 Agents","5,000 ข้อความ/เดือน","รองรับ LINE Bot","สถิติขั้นสูง","AI Auto Reply","สนับสนุนทาง Email & Chat"]', 1),
-      (3, 'Enterprise', 9999, -1, -1, '["ใช้งานได้ไม่จำกัด Agents","ข้อความไม่จำกัด","รองรับ LINE Bot & Multi-channel","สถิติขั้นสูง & Analytics","AI Auto Reply","API Access","ลำดับชั้นผู้ใช้งาน","สนับสนุน 24/7"]', 1)
-    ON CONFLICT (id) DO NOTHING
+      (0, 'Free', 0, 300, 1, '["ใช้งานได้ 1 Bot","300 ข้อความ/เดือน","รองรับ LINE Bot","สถิติพื้นฐาน"]', 1),
+      (1, 'Starter', 390, 3000, 1, '["ใช้งานได้ 1 Bot","3,000 ข้อความ/เดือน","รองรับ LINE Bot","สถิติพื้นฐาน","สนับสนุนทาง Email"]', 1),
+      (2, 'Pro', 590, 15000, 3, '["ใช้งานได้ 3 Bots","15,000 ข้อความ/เดือน","รองรับ LINE Bot","สถิติขั้นสูง","AI Auto Reply","สนับสนุนทาง Email & Chat"]', 1),
+      (3, 'Enterprise', 3900, -1, -1, '["ใช้งานได้ไม่จำกัด Bots","ข้อความไม่จำกัด","รองรับ LINE Bot & Multi-channel","สถิติขั้นสูง & Analytics","AI Auto Reply","API Access","ลำดับชั้นผู้ใช้งาน","สนับสนุน 24/7"]', 1)
+    ON CONFLICT (id) DO UPDATE SET
+      name = excluded.name,
+      price = excluded.price,
+      max_chats = excluded.max_chats,
+      max_agents = excluded.max_agents,
+      features = excluded.features,
+      is_active = excluded.is_active
   `);
 
   // Auto-promote ADMIN_EMAIL to admin role if set
