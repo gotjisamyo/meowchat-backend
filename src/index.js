@@ -102,6 +102,12 @@ const usageRouter = require('./routes/usage');
 app.use('/api/bots', authMiddleware, botsRouter);
 app.use('/api/usage', authMiddleware, usageRouter);
 
+// LINE credential test — alias /api/line/test → /api/bots/line-test (with auth)
+app.post('/api/line/test', authMiddleware, (req, res, next) => {
+  req.url = '/line-test';
+  botsRouter(req, res, next);
+});
+
 // Chat API - Direct
 const { processUserMessage } = require('./agent');
 app.post('/api/chat', authMiddleware, async (req, res) => {

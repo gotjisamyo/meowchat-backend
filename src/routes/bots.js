@@ -1,7 +1,138 @@
 const express = require('express');
 const { getDb } = require('../db');
+const https = require('https');
+const crypto = require('crypto');
 
 const router = express.Router();
+
+// Helper: generate shop ID
+function generateId() {
+  return crypto.randomBytes(8).toString('hex');
+}
+
+// POST /api/bots/setup — save onboarding data (create shop + bot record)
+router.post('/setup', async (req, res) => {
+  try {
+    const {
+      businessType,
+      shopName,
+      phone,
+      openHours,
+      botName,
+      botStyle,
+      lineChannelToken,
+      lineChannelSecret
+    } = req.body;
+
+    if (!shopName) {
+      return res.status(400).json({ error: 'shopName is required' });
+    }
+
+    const db = getDb();
+    const shopId = generateId();
+
+    // Check if user already has a shop (update) or create new one
+    const existing = await db.get(
+      'SELECT id FROM shops WHERE user_id = ? ORDER BY created_at ASC LIMIT 1',
+      [req.userId]
+    );
+
+    if (existing) {
+      // Update existing shop with onboarding data
+      await db.run(`
+        UPDATE shops
+        SET name = ?,
+            description = ?,
+            line_access_token = COALESCE(?, line_access_token),
+            line_channel_secret = COALESCE(?, line_channel_secret),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+      `, [
+        botName || shopName,
+        JSON.stringify({ businessType, shopName, phone, openHours, botStyle }),
+        lineChannelToken || null,
+        lineChannelSecret || null,
+        existing.id,
+        req.userId
+      ]);
+
+      return res.json({ success: true, botId: existing.id, shopId: existing.id });
+    }
+
+    // Create new shop record
+    await db.run(`
+      INSERT INTO shops (id, user_id, name, description, line_access_token, line_channel_secret, plan, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'free', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [
+      shopId,
+      req.userId,
+      botName || shopName,
+      JSON.stringify({ businessType, shopName, phone, openHours, botStyle }),
+      lineChannelToken || '',
+      lineChannelSecret || ''
+    ]);
+
+    res.json({ success: true, botId: shopId, shopId });
+  } catch (error) {
+    console.error('Bot setup error:', error);
+    res.status(500).json({ error: 'Server error', message: 'เกิดข้อผิดพลาด: ' + error.message });
+  }
+});
+
+// POST /api/bots/line-test — verify LINE channel credentials
+router.post('/line-test', async (req, res) => {
+  try {
+    const { channelAccessToken, channelSecret } = req.body;
+
+    if (!channelAccessToken) {
+      return res.status(400).json({ success: false, error: 'channelAccessToken is required' });
+    }
+
+    // Call LINE API to verify token
+    const result = await new Promise((resolve, reject) => {
+      const options = {
+        hostname: 'api.line.me',
+        path: '/v2/bot/info',
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${channelAccessToken}`
+        }
+      };
+
+      const request = https.request(options, (response) => {
+        let data = '';
+        response.on('data', (chunk) => { data += chunk; });
+        response.on('end', () => {
+          try {
+            resolve({ statusCode: response.statusCode, body: JSON.parse(data) });
+          } catch (e) {
+            resolve({ statusCode: response.statusCode, body: {} });
+          }
+        });
+      });
+
+      request.on('error', reject);
+      request.end();
+    });
+
+    if (result.statusCode === 200) {
+      return res.json({
+        success: true,
+        botName: result.body.displayName || '',
+        botPicture: result.body.pictureUrl || ''
+      });
+    } else {
+      return res.json({
+        success: false,
+        error: 'Invalid credentials',
+        detail: result.body.message || 'Token ไม่ถูกต้อง'
+      });
+    }
+  } catch (error) {
+    console.error('LINE test error:', error);
+    res.status(500).json({ success: false, error: 'Server error', message: error.message });
+  }
+});
 
 // GET /api/bots — list all bots (shops) for current user
 router.get('/', async (req, res) => {
