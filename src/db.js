@@ -186,7 +186,6 @@ async function initDatabase() {
       max_chats INTEGER NOT NULL,
       max_agents INTEGER NOT NULL,
       features TEXT,
-      stripe_price_id TEXT,
       is_active INTEGER DEFAULT 1,
       "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -581,3 +580,4 @@ module.exports = {
   updateShop,
   deleteShop
 };
+
