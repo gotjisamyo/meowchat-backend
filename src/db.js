@@ -44,12 +44,12 @@ function getDb() {
 }
 
 async function initDatabase() {
-  // Create orders table
+  // Create orders table (legacy schema — new orders use shop_id/total_amount added below)
   await db.exec(`
     CREATE TABLE IF NOT EXISTS orders (
-      id SERIAL PRIMARY KEY,
-      "lineId" TEXT NOT NULL,
-      product TEXT NOT NULL,
+      id TEXT PRIMARY KEY,
+      "lineId" TEXT,
+      product TEXT,
       quantity INTEGER DEFAULT 1,
       price REAL DEFAULT 0,
       details TEXT,
@@ -58,6 +58,18 @@ async function initDatabase() {
       "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Add new columns to orders for shop-based orders (safe: IF NOT EXISTS)
+  await db.exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS shop_id TEXT`);
+  await db.exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_id TEXT`);
+  await db.exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_number TEXT`);
+  await db.exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS items TEXT`);
+  await db.exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_amount REAL DEFAULT 0`);
+  await db.exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method TEXT`);
+  await db.exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_address TEXT`);
+  await db.exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS note TEXT`);
+  await db.exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+  await db.exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
 
   // Create users table (email/password auth)
   await db.exec(`
@@ -551,7 +563,7 @@ async function getDashboardStats(shopId) {
     db.get('SELECT COUNT(*) as count FROM orders WHERE shop_id = ?', [shopId]),
     db.get("SELECT COUNT(*) as count FROM orders WHERE shop_id = ? AND status = 'pending'", [shopId]),
     db.get("SELECT COUNT(*) as count FROM orders WHERE shop_id = ? AND status = 'completed'", [shopId]),
-    db.get('SELECT COALESCE(SUM(total_amount), 0) as total FROM orders WHERE shop_id = ? AND status = ?', [shopId, 'completed']),
+    db.get('SELECT COALESCE(SUM(COALESCE(total_amount, price, 0)), 0) as total FROM orders WHERE shop_id = ? AND status = ?', [shopId, 'completed']),
     db.get('SELECT COUNT(*) as count FROM products WHERE shop_id = ?', [shopId]),
     db.get("SELECT COUNT(*) as count FROM customers WHERE shop_id = ? AND status != ?", [shopId, 'deleted']),
   ]);

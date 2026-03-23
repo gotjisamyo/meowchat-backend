@@ -46,6 +46,14 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true }));
 
+// Return JSON for malformed body (prevents HTML "Bad Request" responses)
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Bad Request', message: 'รูปแบบ JSON ไม่ถูกต้อง' });
+  }
+  next(err);
+});
+
 // LINE Bot SDK configuration
 const lineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,

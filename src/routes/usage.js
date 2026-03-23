@@ -28,14 +28,16 @@ router.get('/', async (req, res) => {
     }
 
     const shopIds = shops.map(s => s.id);
+    const placeholders = shopIds.map(() => '?').join(',');
 
     // Get active subscription for first shop (or aggregate across all)
+    // Note: subscriptions table uses start_date/end_date (not period_start/period_end)
     const subscription = await db.get(`
       SELECT sub.*, p.name as plan_name, p.max_chats, p.max_agents, p.price,
-             sub.period_start, sub.period_end
+             sub.start_date as period_start, sub.end_date as period_end
       FROM subscriptions sub
       JOIN plans p ON sub.plan_id = p.id
-      WHERE sub.shop_id = ANY(ARRAY[${shopIds.map(() => '?').join(',')}]::text[])
+      WHERE sub.shop_id IN (${placeholders})
         AND sub.status = 'active'
       ORDER BY sub."createdAt" DESC
       LIMIT 1
@@ -45,7 +47,7 @@ router.get('/', async (req, res) => {
     const usageRows = await db.all(`
       SELECT SUM(chats_count) as total_chats, SUM(agents_count) as total_agents
       FROM usage_tracking
-      WHERE shop_id = ANY(ARRAY[${shopIds.map(() => '?').join(',')}]::text[])
+      WHERE shop_id IN (${placeholders})
         AND period_start >= NOW() - INTERVAL '30 days'
     `, shopIds);
 
