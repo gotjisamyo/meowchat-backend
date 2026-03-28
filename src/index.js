@@ -62,6 +62,9 @@ const lineConfig = {
   channelSecret: process.env.LINE_CHANNEL_SECRET || ''
 };
 
+// LINE webhook GET — for LINE platform probe/verify check
+app.get('/api/line/webhook', (req, res) => res.json({ ok: true }));
+
 // LINE webhook — always registered, returns 503 if not configured
 app.post('/api/line/webhook', (req, res, next) => {
   if (!process.env.LINE_CHANNEL_ACCESS_TOKEN || !process.env.LINE_CHANNEL_SECRET) {
