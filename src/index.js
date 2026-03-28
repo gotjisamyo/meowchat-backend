@@ -40,7 +40,8 @@ app.use(cors({
 }));
 app.use(express.json({
   verify: (req, res, buf) => {
-    if (req.originalUrl.startsWith('/api/billing/webhook')) {
+    if (req.originalUrl.startsWith('/api/billing/webhook') ||
+        req.originalUrl.startsWith('/api/line/webhook')) {
       req.rawBody = Buffer.from(buf);
     }
   }
