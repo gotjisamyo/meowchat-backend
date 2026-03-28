@@ -19,6 +19,7 @@ app.use(helmet());
 const allowedOrigins = [
   'https://app.meowchat.store',
   'https://meowchat.store',
+  'https://my.meowchat.store',
   'https://meowchat-admin-dashboard.vercel.app',
   process.env.FRONTEND_URL,
   process.env.ADMIN_URL,
@@ -56,34 +57,35 @@ app.use((err, req, res, next) => {
 
 // LINE Bot SDK configuration
 const lineConfig = {
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
-  channelSecret: process.env.LINE_CHANNEL_SECRET
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || '',
+  channelSecret: process.env.LINE_CHANNEL_SECRET || ''
 };
 
-// LINE webhook handler (only register if credentials are provided)
-if (lineConfig.channelAccessToken && lineConfig.channelSecret) {
-  app.post('/api/line/webhook', (req, res, next) => {
-    line.middleware(lineConfig)(req, res, (err) => {
-      if (err) {
-        console.error('LINE signature validation error:', err.message);
-        return res.status(200).json({ success: false, error: 'signature_invalid' });
-      }
-      next();
+// LINE webhook — always registered, returns 503 if not configured
+app.post('/api/line/webhook', (req, res, next) => {
+  if (!process.env.LINE_CHANNEL_ACCESS_TOKEN || !process.env.LINE_CHANNEL_SECRET) {
+    return res.status(503).json({
+      error: 'LINE not configured',
+      message: 'LINE_CHANNEL_ACCESS_TOKEN and LINE_CHANNEL_SECRET not set'
     });
-  }, async (req, res) => {
-    try {
-      const events = req.body.events;
-      const results = await Promise.all(
-        events.map(event => handleLineEvent(event, lineConfig))
-      );
-      res.json({ success: true, results });
-    } catch (error) {
-      console.error('Webhook error:', error);
-      res.status(200).json({ success: false, error: error.message });
+  }
+  line.middleware(lineConfig)(req, res, (err) => {
+    if (err) {
+      console.error('LINE signature validation error:', err.message);
+      return res.status(400).json({ error: 'Invalid LINE signature' });
     }
+    const events = req.body.events || [];
+    Promise.all(
+      events.map(event => handleLineEvent(event, lineConfig))
+    ).then(() => res.json({ ok: true }))
+     .catch(err => {
+       console.error('LINE event error:', err);
+       res.status(500).json({ error: 'Internal error' });
+     });
   });
-} else {
-  console.log('LINE credentials not configured - webhook disabled');
+});
+if (!process.env.LINE_CHANNEL_ACCESS_TOKEN) {
+  console.log('LINE credentials not configured - webhook returns 503 until set');
 }
 
 // Health check — always responds so Railway healthcheck passes
