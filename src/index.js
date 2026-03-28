@@ -126,6 +126,10 @@ const usageRouter = require('./routes/usage');
 app.use('/api/bots', authMiddleware, botsRouter);
 app.use('/api/usage', authMiddleware, usageRouter);
 
+// Per-shop LINE webhooks: POST /api/line/webhook/:shopId
+// rawBody already captured above for /api/line/webhook/* prefix
+app.use('/api/line/webhook', require('./routes/line'));
+
 // LINE credential test — alias /api/line/test → /api/bots/line-test (with auth)
 app.post('/api/line/test', authMiddleware, (req, res, next) => {
   req.url = '/line-test';

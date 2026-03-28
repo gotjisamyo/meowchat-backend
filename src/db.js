@@ -348,6 +348,36 @@ async function initDatabase() {
   await db.exec(`CREATE INDEX IF NOT EXISTS idx_handoffs_shop_id ON handoffs(shop_id)`);
   await db.exec(`CREATE INDEX IF NOT EXISTS idx_handoffs_status ON handoffs(status)`);
 
+  // Conversations table — chat history from LINE messages
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS conversations (
+      id SERIAL PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      line_user_id TEXT,
+      customer_name TEXT,
+      status TEXT DEFAULT 'active',
+      escalated INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_shop_id ON conversations(shop_id)`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_line_user ON conversations(line_user_id)`);
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS conversation_messages (
+      id SERIAL PRIMARY KEY,
+      conversation_id INTEGER NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_conv_messages_conv_id ON conversation_messages(conversation_id)`);
+
+  // Add stripe_price_id to plans if missing (safe ADD COLUMN IF NOT EXISTS)
+  await db.exec(`ALTER TABLE plans ADD COLUMN IF NOT EXISTS stripe_price_id TEXT`);
+
   // Usage tracking table
   await db.exec(`
     CREATE TABLE IF NOT EXISTS bot_knowledge (
