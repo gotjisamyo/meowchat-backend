@@ -468,4 +468,57 @@ ${productList}
   }
 });
 
+// ── Knowledge Base CRUD ──────────────────────────────────────────────────────
+
+router.get('/:botId/knowledge', async (req, res) => {
+  try {
+    const db = await getDb();
+    const shop = await db.get('SELECT id FROM shops WHERE id = ? AND user_id = ?', [req.params.botId, req.user.id]);
+    const shopId = shop?.id || req.params.botId;
+    const rows = await db.all('SELECT * FROM bot_knowledge WHERE shop_id = ? ORDER BY "createdAt" ASC', [shopId]);
+    res.json(rows.map(r => ({ ...r, keywords: JSON.parse(r.keywords || '[]') })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/:botId/knowledge', async (req, res) => {
+  try {
+    const db = await getDb();
+    const { topic, content, keywords = [] } = req.body;
+    const id = `kb_${Date.now()}`;
+    await db.run(
+      'INSERT INTO bot_knowledge (id, shop_id, topic, content, keywords) VALUES (?, ?, ?, ?, ?)',
+      [id, req.params.botId, topic, content, JSON.stringify(keywords)]
+    );
+    res.json({ id, topic, content, keywords });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/:botId/knowledge/:entryId', async (req, res) => {
+  try {
+    const db = await getDb();
+    const { topic, content, keywords = [] } = req.body;
+    await db.run(
+      'UPDATE bot_knowledge SET topic = ?, content = ?, keywords = ?, "updatedAt" = CURRENT_TIMESTAMP WHERE id = ? AND shop_id = ?',
+      [topic, content, JSON.stringify(keywords), req.params.entryId, req.params.botId]
+    );
+    res.json({ id: req.params.entryId, topic, content, keywords });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/:botId/knowledge/:entryId', async (req, res) => {
+  try {
+    const db = await getDb();
+    await db.run('DELETE FROM bot_knowledge WHERE id = ? AND shop_id = ?', [req.params.entryId, req.params.botId]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

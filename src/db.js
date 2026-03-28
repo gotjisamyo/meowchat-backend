@@ -350,6 +350,18 @@ async function initDatabase() {
 
   // Usage tracking table
   await db.exec(`
+    CREATE TABLE IF NOT EXISTS bot_knowledge (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      topic TEXT NOT NULL,
+      content TEXT NOT NULL,
+      keywords TEXT DEFAULT '[]',
+      "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_bot_knowledge_shop_id ON bot_knowledge(shop_id)`);
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS usage_tracking (
       id SERIAL PRIMARY KEY,
       shop_id TEXT NOT NULL,
