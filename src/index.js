@@ -73,7 +73,9 @@ app.post('/api/line/webhook', (req, res, next) => {
   line.middleware(lineConfig)(req, res, (err) => {
     if (err) {
       console.error('LINE signature validation error:', err.message);
-      return res.status(400).json({ error: 'Invalid LINE signature' });
+      // Still return 200 so LINE platform doesn't report error
+      // but skip processing if signature is invalid
+      return res.json({ ok: true });
     }
     const events = req.body.events || [];
     Promise.all(
