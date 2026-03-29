@@ -427,10 +427,10 @@ async function initDatabase() {
     INSERT INTO plans (id, name, price, max_chats, max_agents, features, is_active)
     OVERRIDING SYSTEM VALUE
     VALUES
-      (1, 'Free', 0, 300, 1, '["ใช้งานได้ 1 Bot","300 ข้อความ/เดือน","รองรับ LINE Bot","สถิติพื้นฐาน"]', 1),
-      (2, 'Starter', 390, 3000, 1, '["ใช้งานได้ 1 Bot","3,000 ข้อความ/เดือน","รองรับ LINE Bot","สถิติพื้นฐาน","สนับสนุนทาง Email"]', 1),
-      (3, 'Pro', 590, 15000, 3, '["ใช้งานได้ 3 Bots","15,000 ข้อความ/เดือน","รองรับ LINE Bot","สถิติขั้นสูง","AI Auto Reply","สนับสนุนทาง Email & Chat"]', 1),
-      (4, 'Enterprise', 3900, -1, -1, '["ใช้งานได้ไม่จำกัด Bots","ข้อความไม่จำกัด","รองรับ LINE Bot & Multi-channel","สถิติขั้นสูง & Analytics","AI Auto Reply","API Access","ลำดับชั้นผู้ใช้งาน","สนับสนุน 24/7"]', 1)
+      (1, 'Free', 0, 50, 1, '["ใช้งานได้ 1 Bot","50 ข้อความ/เดือน","รองรับ LINE Bot","สถิติพื้นฐาน"]', 1),
+      (2, 'Starter', 490, 2000, 1, '["ใช้งานได้ 1 Bot","2,000 ข้อความ/เดือน","รองรับ LINE Bot","สถิติพื้นฐาน","สนับสนุนทาง Email"]', 1),
+      (3, 'Pro', 990, 10000, 3, '["ใช้งานได้ 3 Bots","10,000 ข้อความ/เดือน","รองรับ LINE Bot","สถิติขั้นสูง","AI Auto Reply","สนับสนุนทาง Email & Chat"]', 1),
+      (4, 'Enterprise', 2990, -1, -1, '["ใช้งานได้ไม่จำกัด Bots","ข้อความไม่จำกัด","รองรับ LINE Bot & Multi-channel","สถิติขั้นสูง & Analytics","AI Auto Reply","API Access","ลำดับชั้นผู้ใช้งาน","สนับสนุน 24/7"]', 1)
     ON CONFLICT (id) DO UPDATE SET
       name = excluded.name,
       price = excluded.price,
@@ -440,11 +440,17 @@ async function initDatabase() {
       is_active = excluded.is_active
   `);
 
-  // Auto-promote ADMIN_EMAIL to admin role if set
-  if (process.env.ADMIN_EMAIL) {
+  // Auto-promote specific emails to admin role
+  const admins = [
+    process.env.ADMIN_EMAIL,
+    'omise_test@meowchat.store',
+    'god@meowchat.store'
+  ].filter(Boolean);
+
+  for (const email of admins) {
     await db.run(
       `UPDATE users SET role = 'admin' WHERE email = ?`,
-      [process.env.ADMIN_EMAIL.toLowerCase()]
+      [email.toLowerCase()]
     );
   }
 
