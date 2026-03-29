@@ -440,17 +440,20 @@ async function initDatabase() {
       is_active = excluded.is_active
   `);
 
-  // Auto-promote specific emails to admin role
-  const admins = [
-    process.env.ADMIN_EMAIL,
-    'omise_test@meowchat.store',
-    'god@meowchat.store'
-  ].filter(Boolean);
-
-  for (const email of admins) {
+  // Auto-promote ADMIN_EMAIL to admin role if set
+  if (process.env.ADMIN_EMAIL) {
     await db.run(
       `UPDATE users SET role = 'admin' WHERE email = ?`,
-      [email.toLowerCase()]
+      [process.env.ADMIN_EMAIL.toLowerCase()]
+    );
+  }
+
+  // Ensure demo accounts are 'user' role for realistic merchant experience
+  const demoUsers = ['omise_test@meowchat.store', 'god@meowchat.store'];
+  for (const email of demoUsers) {
+    await db.run(
+      `UPDATE users SET role = 'user' WHERE email = ?`,
+      [email]
     );
   }
 
