@@ -6,6 +6,27 @@ const router = express.Router();
 
 router.use(authMiddleware, requireAdmin);
 
+// Promote a user to admin or user role (admin only)
+router.patch('/users/role', async (req, res) => {
+  try {
+    const { email, role } = req.body;
+    const allowedRoles = ['admin', 'user', 'manager'];
+    if (!email || !role || !allowedRoles.includes(role)) {
+      return res.status(400).json({ error: 'Invalid input', message: 'กรุณาระบุ email และ role ที่ถูกต้อง' });
+    }
+    const db = getDb();
+    const target = await db.get('SELECT id, email, role FROM users WHERE email = ?', [email.toLowerCase()]);
+    if (!target) {
+      return res.status(404).json({ error: 'User not found', message: 'ไม่พบผู้ใช้' });
+    }
+    await db.run('UPDATE users SET role = ? WHERE email = ?', [role, email.toLowerCase()]);
+    res.json({ message: `อัปเดต role เป็น ${role} สำเร็จ`, user: { ...target, role } });
+  } catch (error) {
+    console.error('Promote user error:', error);
+    res.status(500).json({ error: 'Server error', message: 'เกิดข้อผิดพลาด' });
+  }
+});
+
 router.get('/shops', async (req, res) => {
   try {
     const db = getDb();
