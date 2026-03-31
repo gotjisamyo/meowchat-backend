@@ -142,7 +142,7 @@ app.post('/api/internal/log', async (req, res) => {
   if (!key || key !== process.env.INTERNAL_API_KEY) {
     return res.status(401).json({ error: 'unauthorized' });
   }
-  const { botId, lineUserId, userText, botReply } = req.body;
+  const { botId, lineUserId, userText, botReply, escalated } = req.body;
   if (!botId || !lineUserId) {
     return res.status(400).json({ error: 'botId and lineUserId required' });
   }
@@ -155,29 +155,41 @@ app.post('/api/internal/log', async (req, res) => {
       'SELECT id, escalated FROM conversations WHERE shop_id = ? AND line_user_id = ?',
       [botId, lineUserId]
     );
+    const wasEscalated = conv?.escalated;
     if (!conv) {
       const result = await db.run(
         `INSERT INTO conversations (shop_id, line_user_id, customer_name, status, escalated)
-         VALUES (?, ?, ?, 'active', 0)`,
-        [botId, lineUserId, lineUserId]
+         VALUES (?, ?, ?, 'active', ?)`,
+        [botId, lineUserId, lineUserId, escalated ? 1 : 0]
       );
-      conv = { id: result.lastID, escalated: 0 };
+      conv = { id: result.lastID, escalated: escalated ? 1 : 0 };
     } else {
       await db.run(
-        'UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        [conv.id]
+        'UPDATE conversations SET updated_at = CURRENT_TIMESTAMP, escalated = ? WHERE id = ?',
+        [escalated ? 1 : conv.escalated, conv.id]
       );
     }
 
     // Save both turns as messages
-    await db.run(
-      'INSERT INTO conversation_messages (conversation_id, role, content) VALUES (?, ?, ?)',
-      [conv.id, 'user', userText]
-    );
-    await db.run(
-      'INSERT INTO conversation_messages (conversation_id, role, content) VALUES (?, ?, ?)',
-      [conv.id, 'assistant', botReply]
-    );
+    if (userText) {
+      await db.run(
+        'INSERT INTO conversation_messages (conversation_id, role, content) VALUES (?, ?, ?)',
+        [conv.id, 'user', userText]
+      );
+    }
+    if (botReply) {
+      await db.run(
+        'INSERT INTO conversation_messages (conversation_id, role, content) VALUES (?, ?, ?)',
+        [conv.id, 'assistant', botReply]
+      );
+    }
+
+    // Send LINE Notify to merchant when newly escalated
+    if (escalated && !wasEscalated) {
+      sendLineNotify(db, botId, lineUserId, userText).catch(e =>
+        console.warn('[notify] LINE Notify failed:', e)
+      );
+    }
 
     res.json({ ok: true, conversationId: conv.id });
   } catch (err) {
@@ -185,6 +197,19 @@ app.post('/api/internal/log', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+async function sendLineNotify(db, shopId, lineUserId, lastMessage) {
+  const shop = await db.get('SELECT line_notify_token FROM shops WHERE id = ?', [shopId]);
+  const token = shop?.line_notify_token;
+  if (!token) return;
+  const text = `\n🔔 ลูกค้าขอคุยกับพนักงาน!\nLine ID: ${lineUserId}\nข้อความล่าสุด: "${lastMessage || ''}"`;
+  await fetch('https://notify-api.line.me/api/notify', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ message: text }),
+  });
+  console.log(`[notify] LINE Notify sent for shop=${shopId}`);
+}
 
 // Chat API - Direct
 const { processUserMessage } = require('./agent');

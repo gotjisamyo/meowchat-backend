@@ -102,6 +102,8 @@ async function initDatabase() {
     )
   `);
 
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS line_notify_token TEXT DEFAULT ''`);
+
   // Create products table (linked to shop)
   await db.exec(`
     CREATE TABLE IF NOT EXISTS products (

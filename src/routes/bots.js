@@ -221,15 +221,18 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Bot not found', message: 'ไม่พบ bot' });
     }
 
+    const { line_notify_token } = req.body;
     await db.run(`
       UPDATE shops
       SET name = COALESCE(?, name),
           description = COALESCE(?, description),
+          line_notify_token = COALESCE(?, line_notify_token),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
     `, [
       name || null,
       description || personality || null,
+      line_notify_token !== undefined ? line_notify_token : null,
       req.params.id,
       req.userId
     ]);
@@ -279,6 +282,21 @@ router.get('/:botId/conversations', async (req, res) => {
   } catch (error) {
     console.error('Get conversations error:', error);
     res.status(500).json({ error: 'Server error', message: 'เกิดข้อผิดพลาด' });
+  }
+});
+
+// GET /api/bots/:botId/conversations/:convId/messages — message thread
+router.get('/:botId/conversations/:convId/messages', async (req, res) => {
+  try {
+    const db = await getDb();
+    const messages = await db.all(
+      `SELECT id, role, content, created_at FROM conversation_messages
+       WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 200`,
+      [req.params.convId]
+    );
+    res.json({ messages });
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
