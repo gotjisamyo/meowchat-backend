@@ -136,6 +136,56 @@ app.post('/api/line/test', authMiddleware, (req, res, next) => {
   botsRouter(req, res, next);
 });
 
+// ─── Internal API — called by meowchat-engine to log conversations ─────────────
+app.post('/api/internal/log', async (req, res) => {
+  const key = req.headers['x-internal-key'];
+  if (!key || key !== process.env.INTERNAL_API_KEY) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  const { botId, lineUserId, userText, botReply } = req.body;
+  if (!botId || !lineUserId) {
+    return res.status(400).json({ error: 'botId and lineUserId required' });
+  }
+  try {
+    const { getDb } = require('./db');
+    const db = await getDb();
+
+    // Upsert conversation row (one row per LINE user per shop)
+    let conv = await db.get(
+      'SELECT id, escalated FROM conversations WHERE shop_id = ? AND line_user_id = ?',
+      [botId, lineUserId]
+    );
+    if (!conv) {
+      const result = await db.run(
+        `INSERT INTO conversations (shop_id, line_user_id, customer_name, status, escalated)
+         VALUES (?, ?, ?, 'active', 0)`,
+        [botId, lineUserId, lineUserId]
+      );
+      conv = { id: result.lastID, escalated: 0 };
+    } else {
+      await db.run(
+        'UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [conv.id]
+      );
+    }
+
+    // Save both turns as messages
+    await db.run(
+      'INSERT INTO conversation_messages (conversation_id, role, content) VALUES (?, ?, ?)',
+      [conv.id, 'user', userText]
+    );
+    await db.run(
+      'INSERT INTO conversation_messages (conversation_id, role, content) VALUES (?, ?, ?)',
+      [conv.id, 'assistant', botReply]
+    );
+
+    res.json({ ok: true, conversationId: conv.id });
+  } catch (err) {
+    console.error('[internal/log] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Chat API - Direct
 const { processUserMessage } = require('./agent');
 app.post('/api/chat', authMiddleware, async (req, res) => {

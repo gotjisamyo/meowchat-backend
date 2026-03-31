@@ -258,14 +258,20 @@ router.get('/:botId/conversations', async (req, res) => {
       return res.status(404).json({ error: 'Bot not found', message: 'ไม่พบ bot' });
     }
 
-    // Fetch customers who have chatted with this shop as conversations
+    // Fetch real conversations logged by engine (with message counts)
     const conversations = await db.all(`
-      SELECT c.id, c.name, c.line_user_id, c.phone, c.email,
-             c.customer_group, c.status, c.total_orders, c.total_spent,
-             c.last_order_at as last_message_at, c.created_at
-      FROM customers c
-      WHERE c.shop_id = ? AND c.status != 'deleted'
-      ORDER BY c.last_order_at DESC NULLS LAST, c.created_at DESC
+      SELECT
+        cv.id, cv.line_user_id, cv.customer_name as name,
+        cv.status, cv.escalated,
+        cv.created_at, cv.updated_at as last_message_at,
+        COUNT(cm.id) as message_count,
+        (SELECT cm2.content FROM conversation_messages cm2
+         WHERE cm2.conversation_id = cv.id ORDER BY cm2.created_at DESC LIMIT 1) as last_message
+      FROM conversations cv
+      LEFT JOIN conversation_messages cm ON cm.conversation_id = cv.id
+      WHERE cv.shop_id = ?
+      GROUP BY cv.id
+      ORDER BY cv.updated_at DESC
       LIMIT 100
     `, [req.params.botId]);
 
@@ -491,7 +497,10 @@ router.post('/:botId/knowledge', async (req, res) => {
       'INSERT INTO bot_knowledge (id, shop_id, topic, content, keywords) VALUES (?, ?, ?, ?, ?)',
       [id, req.params.botId, topic, content, JSON.stringify(keywords)]
     );
-    res.json({ id, topic, content, keywords });
+    const entry = { id, topic, content, keywords };
+    // Sync KB to engine (non-blocking)
+    syncKBToEngine(req.params.botId, db).catch(e => console.warn('[bots] KB sync failed:', e));
+    res.json(entry);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -505,6 +514,8 @@ router.put('/:botId/knowledge/:entryId', async (req, res) => {
       'UPDATE bot_knowledge SET topic = ?, content = ?, keywords = ?, "updatedAt" = CURRENT_TIMESTAMP WHERE id = ? AND shop_id = ?',
       [topic, content, JSON.stringify(keywords), req.params.entryId, req.params.botId]
     );
+    // Sync KB to engine (non-blocking)
+    syncKBToEngine(req.params.botId, db).catch(e => console.warn('[bots] KB sync failed:', e));
     res.json({ id: req.params.entryId, topic, content, keywords });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -515,10 +526,48 @@ router.delete('/:botId/knowledge/:entryId', async (req, res) => {
   try {
     const db = await getDb();
     await db.run('DELETE FROM bot_knowledge WHERE id = ? AND shop_id = ?', [req.params.entryId, req.params.botId]);
+    // Sync KB to engine (non-blocking)
+    syncKBToEngine(req.params.botId, db).catch(e => console.warn('[bots] KB sync failed:', e));
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ── KB sync helper: push KB to meowchat-engine ────────────────────────────────
+async function syncKBToEngine(shopId, db) {
+  const engineUrl = process.env.ENGINE_URL;
+  const engineKey = process.env.ENGINE_ADMIN_KEY;
+  if (!engineUrl || !engineKey) return;
+
+  // 1. Fetch current bot config from engine
+  const configRes = await fetch(`${engineUrl}/admin/bots/${shopId}`, {
+    headers: { 'x-admin-key': engineKey }
+  });
+  if (!configRes.ok) return; // bot not registered in engine yet
+
+  const config = await configRes.json();
+
+  // 2. Load KB from DB
+  const rows = await db.all(
+    'SELECT * FROM bot_knowledge WHERE shop_id = ? ORDER BY "createdAt" ASC',
+    [shopId]
+  );
+  const knowledgeBase = rows.map(r => ({
+    id: r.id,
+    topic: r.topic,
+    content: r.content,
+    keywords: JSON.parse(r.keywords || '[]'),
+  }));
+
+  // 3. Push updated config back to engine
+  await fetch(`${engineUrl}/admin/bots`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-key': engineKey },
+    body: JSON.stringify({ ...config, knowledgeBase }),
+  });
+
+  console.log(`[bots] KB synced to engine: shopId=${shopId}, entries=${knowledgeBase.length}`);
+}
 
 module.exports = router;
