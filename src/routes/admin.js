@@ -6,6 +6,60 @@ const router = express.Router();
 
 router.use(authMiddleware, requireAdmin);
 
+// GET /api/admin/stats — aggregate stats for admin dashboard
+router.get('/stats', async (req, res) => {
+  try {
+    const db = getDb();
+    const [
+      totalShops,
+      totalUsers,
+      planCounts,
+      recentShops,
+    ] = await Promise.all([
+      db.get('SELECT COUNT(*) as count FROM shops'),
+      db.get('SELECT COUNT(*) as count FROM users'),
+      db.all(`SELECT plan, COUNT(*) as count FROM shops GROUP BY plan`),
+      db.all(`
+        SELECT s.id, s.name, s.plan, s.created_at, u.email as owner_email
+        FROM shops s LEFT JOIN users u ON u.id = s.user_id
+        ORDER BY s.created_at DESC LIMIT 10
+      `),
+    ]);
+
+    const byPlan = { free: 0, starter: 0, business: 0, enterprise: 0 };
+    planCounts.forEach(r => { byPlan[r.plan] = r.count; });
+
+    res.json({
+      totalShops: totalShops.count,
+      totalUsers: totalUsers.count,
+      activeShops: totalShops.count,
+      byPlan,
+      recentShops,
+    });
+  } catch (err) {
+    console.error('Admin stats error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/users — list all users with shop count
+router.get('/users', async (req, res) => {
+  try {
+    const db = getDb();
+    const users = await db.all(`
+      SELECT u.id, u.email, u.name, u.role, u.created_at,
+             COUNT(s.id) as shop_count
+      FROM users u
+      LEFT JOIN shops s ON s.user_id = u.id
+      GROUP BY u.id
+      ORDER BY u.created_at DESC
+    `);
+    res.json({ users });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Promote a user to admin or user role (admin only)
 router.patch('/users/role', async (req, res) => {
   try {
