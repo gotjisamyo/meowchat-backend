@@ -34,11 +34,13 @@ router.get('/', async (req, res) => {
     // Note: subscriptions table uses start_date/end_date (not period_start/period_end)
     const subscription = await db.get(`
       SELECT sub.*, p.name as plan_name, p.max_chats, p.max_agents, p.price,
-             sub.start_date as period_start, sub.end_date as period_end
+             sub.start_date as period_start, sub.end_date as period_end,
+             sh.trial_ends_at
       FROM subscriptions sub
       JOIN plans p ON sub.plan_id = p.id
+      JOIN shops sh ON sh.id = sub.shop_id
       WHERE sub.shop_id IN (${placeholders})
-        AND sub.status = 'active'
+        AND sub.status IN ('active', 'trial')
       ORDER BY sub."createdAt" DESC
       LIMIT 1
     `, shopIds);
@@ -58,10 +60,11 @@ router.get('/', async (req, res) => {
       messages_limit: subscription ? Number(subscription.max_chats) : 300,
       bots_count: shopIds.length,
       bots_limit: subscription ? Number(subscription.max_agents) : 1,
-      plan: subscription ? subscription.plan_name : 'free',
+      plan: subscription ? subscription.plan_name : 'Trial',
       plan_price: subscription ? Number(subscription.price) : 0,
       period_start: subscription ? subscription.period_start : null,
       period_end: subscription ? subscription.period_end : null,
+      trial_ends_at: subscription?.trial_ends_at || null,
       shops: shopIds
     });
   } catch (error) {

@@ -103,6 +103,8 @@ async function initDatabase() {
   `);
 
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS line_notify_token TEXT DEFAULT ''`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMP`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS trial_reminder_sent BOOLEAN DEFAULT FALSE`);
 
   // Create products table (linked to shop)
   await db.exec(`
@@ -429,10 +431,10 @@ async function initDatabase() {
     INSERT INTO plans (id, name, price, max_chats, max_agents, features, is_active)
     OVERRIDING SYSTEM VALUE
     VALUES
-      (1, 'Free', 0, 50, 1, '["ใช้งานได้ 1 Bot","50 ข้อความ/เดือน","รองรับ LINE Bot","สถิติพื้นฐาน"]', 1),
-      (2, 'Starter', 490, 2000, 1, '["ใช้งานได้ 1 Bot","2,000 ข้อความ/เดือน","รองรับ LINE Bot","สถิติพื้นฐาน","สนับสนุนทาง Email"]', 1),
-      (3, 'Pro', 990, 10000, 3, '["ใช้งานได้ 3 Bots","10,000 ข้อความ/เดือน","รองรับ LINE Bot","สถิติขั้นสูง","AI Auto Reply","สนับสนุนทาง Email & Chat"]', 1),
-      (4, 'Enterprise', 2990, -1, -1, '["ใช้งานได้ไม่จำกัด Bots","ข้อความไม่จำกัด","รองรับ LINE Bot & Multi-channel","สถิติขั้นสูง & Analytics","AI Auto Reply","API Access","ลำดับชั้นผู้ใช้งาน","สนับสนุน 24/7"]', 1)
+      (1, 'Trial', 0, 300, 1, '["ทดลองใช้ฟรี 14 วัน","300 ข้อความ/เดือน","1 LINE OA","Knowledge Base 5 รายการ","ซัพพอร์ตทาง LINE"]', 1),
+      (2, 'Pro', 376, 2000, 1, '["2,000 ข้อความ/เดือน","1 LINE OA","Knowledge Base ไม่จำกัด","Analytics พื้นฐาน","AI Auto Reply","ซัพพอร์ตทาง LINE & Email"]', 1),
+      (3, 'Pro+', 790, 10000, 3, '["10,000 ข้อความ/เดือน","3 LINE OA","Knowledge Base ไม่จำกัด","Analytics ครบครัน","AI Auto Reply","Priority Support"]', 1),
+      (4, 'Enterprise', 2990, -1, -1, '["ข้อความไม่จำกัด","LINE OA ไม่จำกัด","Knowledge Base ไม่จำกัด","Dedicated Support","SLA 99.9%","Custom integration","White-label option"]', 1)
     ON CONFLICT (id) DO UPDATE SET
       name = excluded.name,
       price = excluded.price,

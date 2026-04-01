@@ -203,6 +203,32 @@ router.post('/payments/:id/approve', async (req, res) => {
   }
 });
 
+// POST /api/admin/shops/:shopId/extend-trial — extend trial by N days
+router.post('/shops/:shopId/extend-trial', async (req, res) => {
+  try {
+    const db = getDb();
+    const { shopId } = req.params;
+    const days = parseInt(req.body.days) || 7;
+
+    const shop = await db.get('SELECT * FROM shops WHERE id = ?', [shopId]);
+    if (!shop) return res.status(404).json({ error: 'Shop not found' });
+
+    const base = shop.trial_ends_at ? new Date(shop.trial_ends_at) : new Date();
+    const newEndsAt = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+
+    await db.run(
+      `UPDATE shops SET trial_ends_at = ?, trial_reminder_sent = FALSE WHERE id = ?`,
+      [newEndsAt.toISOString(), shopId]
+    );
+
+    console.log(`[admin] extended trial for shop=${shopId} by ${days} days → ${newEndsAt.toISOString()}`);
+    res.json({ message: `ยืด trial ออก ${days} วัน`, trial_ends_at: newEndsAt.toISOString() });
+  } catch (error) {
+    console.error('Admin extend trial error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 router.post('/payments/:id/reject', async (req, res) => {
   try {
     const db = getDb();

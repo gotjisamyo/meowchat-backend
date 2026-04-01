@@ -58,14 +58,16 @@ router.post('/', authMiddleware, async (req, res) => {
       lineAccessToken || ''
     ]);
 
-    // Assign Free plan subscription to new shop
+    // Assign Trial plan + set trial_ends_at = 14 days from now
+    const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
     try {
+      await db.run(`UPDATE shops SET trial_ends_at = ? WHERE id = ?`, [trialEndsAt, shopId]);
       await db.run(`
         INSERT INTO subscriptions (shop_id, plan_id, status, payment_method, payment_status)
-        VALUES (?, 0, 'active', 'free', 'paid')
+        VALUES (?, 1, 'trial', 'free', 'paid')
       `, [shopId]);
     } catch (subErr) {
-      console.error('Create subscription error (non-fatal):', subErr.message);
+      console.error('Create trial subscription error (non-fatal):', subErr.message);
     }
 
     // Get the created shop

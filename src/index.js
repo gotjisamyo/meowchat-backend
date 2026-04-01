@@ -211,6 +211,46 @@ async function sendLineNotify(db, shopId, lineUserId, lastMessage) {
   console.log(`[notify] LINE Notify sent for shop=${shopId}`);
 }
 
+// Trial Day-10 Reminder — runs every 24h, sends LINE Notify to shops expiring in 4 days
+async function sendTrialReminders() {
+  try {
+    const db = getDb();
+    if (!db) return;
+    // Find shops where trial ends in 3–5 days (catches day 10 of 14-day trial)
+    const shops = await db.all(`
+      SELECT s.id, s.name, s.line_notify_token
+      FROM shops s
+      WHERE s.trial_ends_at IS NOT NULL
+        AND s.trial_reminder_sent = FALSE
+        AND s.trial_ends_at BETWEEN NOW() + INTERVAL '3 days' AND NOW() + INTERVAL '5 days'
+    `);
+    for (const shop of shops) {
+      if (!shop.line_notify_token) continue;
+      const daysLeft = 4;
+      const msg = `\n⏰ ทดลองใช้ MeowChat เหลืออีก ${daysLeft} วัน!\n\nบอทของคุณตอบลูกค้าให้คุณทุกวัน อย่าให้มันหยุดทำงาน\n\n👉 Upgrade ที่ my.meowchat.store/subscription\n✅ Pro ฿376/เดือน — คุ้มกว่าจ้างพนักงานตอบ LINE`;
+      try {
+        await fetch('https://notify-api.line.me/api/notify', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ message: msg }),
+        });
+        await db.run(`UPDATE shops SET trial_reminder_sent = TRUE WHERE id = ?`, [shop.id]);
+        console.log(`[trial-reminder] sent to shop=${shop.id}`);
+      } catch (e) {
+        console.error(`[trial-reminder] failed for shop=${shop.id}:`, e.message);
+      }
+    }
+  } catch (err) {
+    console.error('[trial-reminder] scheduler error:', err.message);
+  }
+}
+
+// Run trial reminders once at startup (after delay) then every 24h
+setTimeout(() => {
+  sendTrialReminders();
+  setInterval(sendTrialReminders, 24 * 60 * 60 * 1000);
+}, 30 * 1000);
+
 // Chat API - Direct
 const { processUserMessage } = require('./agent');
 app.post('/api/chat', authMiddleware, async (req, res) => {
