@@ -639,3 +639,4 @@ router.post('/:botId/track-upgrade', async (req, res) => {
 });
 
 module.exports = router;
+// GEMINI_API_KEY env var added 1775060471
