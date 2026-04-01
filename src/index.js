@@ -245,10 +245,92 @@ async function sendTrialReminders() {
   }
 }
 
-// Run trial reminders once at startup (after delay) then every 24h
+// Day-3 Activation Notify — check if bot ever responded; if not, prompt setup
+async function sendDay3Notifications() {
+  try {
+    const db = getDb();
+    if (!db) return;
+    // Shops that signed up ~3 days ago and have LINE Notify token
+    const shops = await db.all(`
+      SELECT s.id, s.name, s.line_notify_token
+      FROM shops s
+      WHERE s.line_notify_token IS NOT NULL AND s.line_notify_token != ''
+        AND s.created_at BETWEEN NOW() - INTERVAL '4 days' AND NOW() - INTERVAL '2 days'
+        AND NOT EXISTS (
+          SELECT 1 FROM conversations c WHERE c.shop_id = s.id LIMIT 1
+        )
+    `);
+    for (const shop of shops) {
+      const msg = `\n🐱 สวัสดีครับ! บอท MeowChat ของ "${shop.name}" ทำงานได้แล้วไหมครับ?\n\nถ้ายังไม่ได้ตั้งค่า webhook ไม่ต้องกังวล — เข้าไปที่ my.meowchat.store/bot แล้วทำตาม step-by-step ได้เลย ใช้เวลาแค่ 5 นาที\n\nมีปัญหาติดต่อ @MeowChatSupport ได้เลยครับ 🙏`;
+      try {
+        await fetch('https://notify-api.line.me/api/notify', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ message: msg }),
+        });
+        console.log(`[day3-notify] sent to shop=${shop.id}`);
+      } catch (e) {
+        console.error(`[day3-notify] failed for shop=${shop.id}:`, e.message);
+      }
+    }
+  } catch (err) {
+    console.error('[day3-notify] error:', err.message);
+  }
+}
+
+// Weekly Summary Digest — every Monday sends last 7 days stats via LINE Notify
+async function sendWeeklySummary() {
+  const now = new Date();
+  if (now.getDay() !== 1) return; // Monday only
+  try {
+    const db = getDb();
+    if (!db) return;
+    const shops = await db.all(`
+      SELECT s.id, s.name, s.line_notify_token
+      FROM shops s
+      WHERE s.line_notify_token IS NOT NULL AND s.line_notify_token != ''
+    `);
+    for (const shop of shops) {
+      const stats = await db.get(`
+        SELECT
+          COUNT(*) as total,
+          SUM(CASE WHEN escalated = TRUE THEN 1 ELSE 0 END) as escalated
+        FROM conversations
+        WHERE shop_id = ?
+          AND created_at >= NOW() - INTERVAL '7 days'
+      `, [shop.id]);
+      const total = stats?.total ?? 0;
+      if (total === 0) continue; // no activity, skip
+      const esc = stats?.escalated ?? 0;
+      const aiRate = total > 0 ? Math.round(((total - esc) / total) * 100) : 0;
+      const timeSaved = Math.round((total * 3) / 60);
+      const msg = `\n📊 สรุปสัปดาห์ — "${shop.name}"\n\n🤖 บอทตอบแทนคุณ: ${total} ครั้ง\n⏰ ประหยัดเวลา: ~${timeSaved} ชั่วโมง\n✅ AI ตอบได้เอง: ${aiRate}%\n🔔 ส่งต่อพนักงาน: ${esc} ครั้ง\n\nดูรายละเอียดที่ my.meowchat.store 🐱`;
+      try {
+        await fetch('https://notify-api.line.me/api/notify', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ message: msg }),
+        });
+        console.log(`[weekly-summary] sent to shop=${shop.id}`);
+      } catch (e) {
+        console.error(`[weekly-summary] failed for shop=${shop.id}:`, e.message);
+      }
+    }
+  } catch (err) {
+    console.error('[weekly-summary] error:', err.message);
+  }
+}
+
+// Run all schedulers: startup delay then every 24h
 setTimeout(() => {
   sendTrialReminders();
-  setInterval(sendTrialReminders, 24 * 60 * 60 * 1000);
+  sendDay3Notifications();
+  sendWeeklySummary();
+  setInterval(() => {
+    sendTrialReminders();
+    sendDay3Notifications();
+    sendWeeklySummary();
+  }, 24 * 60 * 60 * 1000);
 }, 30 * 1000);
 
 // Chat API - Direct

@@ -203,6 +203,27 @@ router.post('/payments/:id/approve', async (req, res) => {
   }
 });
 
+// GET /api/admin/trials-expiring — shops with trial ending in next 7 days
+router.get('/trials-expiring', async (req, res) => {
+  try {
+    const db = getDb();
+    const shops = await db.all(`
+      SELECT s.id, s.name, s.trial_ends_at, s.line_notify_token, u.email as owner_email,
+             EXTRACT(DAY FROM s.trial_ends_at - NOW()) as days_left
+      FROM shops s
+      LEFT JOIN users u ON u.id = s.user_id
+      WHERE s.trial_ends_at IS NOT NULL
+        AND s.trial_ends_at > NOW()
+        AND s.trial_ends_at <= NOW() + INTERVAL '7 days'
+      ORDER BY s.trial_ends_at ASC
+    `);
+    res.json({ shops });
+  } catch (err) {
+    console.error('Admin trials-expiring error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/admin/shops/:shopId/extend-trial — extend trial by N days
 router.post('/shops/:shopId/extend-trial', async (req, res) => {
   try {
