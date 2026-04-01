@@ -85,6 +85,8 @@ router.post('/setup', async (req, res) => {
       if (lineChannelToken) {
         trackEvent(existing.id, EVENTS.BOT_ACTIVATED).catch(() => {});
       }
+      // Re-sync bot config to engine (non-blocking)
+      syncBotToEngine(existing.id, db).catch(e => console.warn('[bots] engine sync failed:', e));
       return res.json({ success: true, botId: existing.id, shopId: existing.id });
     }
 
@@ -119,6 +121,9 @@ router.post('/setup', async (req, res) => {
     if (lineChannelToken) {
       trackEvent(shopId, EVENTS.BOT_ACTIVATED).catch(() => {});
     }
+
+    // Register bot in engine (non-blocking)
+    syncBotToEngine(shopId, db).catch(e => console.warn('[bots] engine sync failed:', e));
 
     res.json({ success: true, botId: shopId, shopId });
   } catch (error) {
@@ -246,23 +251,30 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Bot not found', message: 'ไม่พบ bot' });
     }
 
-    const { line_notify_token } = req.body;
+    const { line_notify_token, line_access_token, line_channel_secret } = req.body;
     await db.run(`
       UPDATE shops
       SET name = COALESCE(?, name),
           description = COALESCE(?, description),
           line_notify_token = COALESCE(?, line_notify_token),
+          line_access_token = COALESCE(?, line_access_token),
+          line_channel_secret = COALESCE(?, line_channel_secret),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
     `, [
       name || null,
       description || personality || null,
       line_notify_token !== undefined ? line_notify_token : null,
+      line_access_token || null,
+      line_channel_secret || null,
       req.params.id,
       req.userId
     ]);
 
     const bot = await db.get('SELECT * FROM shops WHERE id = ?', [req.params.id]);
+
+    // Re-sync full bot config to engine whenever settings change
+    syncBotToEngine(req.params.id, db).catch(e => console.warn('[bots] engine sync failed:', e));
 
     res.json({ message: 'อัปเดต bot สำเร็จ', bot });
   } catch (error) {
@@ -589,21 +601,18 @@ router.delete('/:botId/knowledge/:entryId', async (req, res) => {
   }
 });
 
-// ── KB sync helper: push KB to meowchat-engine ────────────────────────────────
-async function syncKBToEngine(shopId, db) {
+// ── Full bot sync to engine — register bot + push KB ──────────────────────────
+async function syncBotToEngine(shopId, db) {
   const engineUrl = process.env.ENGINE_URL;
   const engineKey = process.env.ENGINE_ADMIN_KEY;
   if (!engineUrl || !engineKey) return;
 
-  // 1. Fetch current bot config from engine
-  const configRes = await fetch(`${engineUrl}/admin/bots/${shopId}`, {
-    headers: { 'x-admin-key': engineKey }
-  });
-  if (!configRes.ok) return; // bot not registered in engine yet
+  const shop = await db.get('SELECT * FROM shops WHERE id = ?', [shopId]);
+  if (!shop) return;
 
-  const config = await configRes.json();
+  let desc = {};
+  try { desc = JSON.parse(shop.description || '{}'); } catch {}
 
-  // 2. Load KB from DB
   const rows = await db.all(
     'SELECT * FROM bot_knowledge WHERE shop_id = ? ORDER BY "createdAt" ASC',
     [shopId]
@@ -612,17 +621,38 @@ async function syncKBToEngine(shopId, db) {
     id: r.id,
     topic: r.topic,
     content: r.content,
-    keywords: JSON.parse(r.keywords || '[]'),
+    keywords: typeof r.keywords === 'string' ? JSON.parse(r.keywords || '[]') : (r.keywords || []),
   }));
 
-  // 3. Push updated config back to engine
+  const config = {
+    botId: shopId,
+    botName: shop.name || 'MeowChat Bot',
+    businessName: desc.shopName || shop.name || '',
+    personalityMode: desc.botStyle || 'friendly',
+    businessScope: [desc.openHours, desc.phone].filter(Boolean),
+    lineChannelSecret: shop.line_channel_secret || '',
+    lineChannelAccessToken: shop.line_access_token || '',
+    geminiApiKey: process.env.GEMINI_API_KEY || '',
+    model: 'gemini-2.0-flash',
+    knowledgeBase,
+    showBranding: shop.plan !== 'active',
+    subscriptionStatus: shop.subscription_status || 'trial',
+    botLocked: shop.bot_locked || false,
+  };
+
   await fetch(`${engineUrl}/admin/bots`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-admin-key': engineKey },
-    body: JSON.stringify({ ...config, knowledgeBase }),
+    body: JSON.stringify(config),
   });
 
-  console.log(`[bots] KB synced to engine: shopId=${shopId}, entries=${knowledgeBase.length}`);
+  console.log(`[bots] synced to engine: shopId=${shopId}, kb=${knowledgeBase.length} entries, lineToken=${shop.line_access_token ? 'SET' : 'EMPTY'}`);
+}
+
+// ── KB sync helper: update only KB in engine (bot must be registered) ──────────
+async function syncKBToEngine(shopId, db) {
+  // Now just delegates to full sync — simpler and always correct
+  return syncBotToEngine(shopId, db);
 }
 
 // POST /api/bots/:botId/track-upgrade — called when merchant clicks Upgrade button
