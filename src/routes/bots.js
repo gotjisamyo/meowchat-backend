@@ -89,17 +89,29 @@ router.post('/setup', async (req, res) => {
     }
 
     // Create new shop record
+    const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
     await db.run(`
-      INSERT INTO shops (id, user_id, name, description, line_access_token, line_channel_secret, plan, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'free', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      INSERT INTO shops (id, user_id, name, description, line_access_token, line_channel_secret, plan, trial_ends_at, subscription_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'trial', ?, 'trial', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `, [
       shopId,
       req.userId,
       botName || shopName,
       JSON.stringify({ businessType, shopName, phone, openHours, botStyle }),
       lineChannelToken || '',
-      lineChannelSecret || ''
+      lineChannelSecret || '',
+      trialEndsAt
     ]);
+
+    // Create trial subscription record
+    try {
+      await db.run(`
+        INSERT INTO subscriptions (shop_id, plan_id, status, payment_method, payment_status)
+        VALUES (?, 1, 'trial', 'free', 'paid')
+      `, [shopId]);
+    } catch (subErr) {
+      console.error('Create trial subscription error (non-fatal):', subErr.message);
+    }
 
     // Track trial_started on new shop creation
     trackEvent(shopId, EVENTS.TRIAL_STARTED).catch(() => {});
@@ -458,6 +470,18 @@ router.post('/:botId/simulate', async (req, res) => {
       ).join('\n');
     }
 
+    // Get KB entries for context
+    const kbEntries = await db.all(
+      'SELECT topic, content FROM bot_knowledge WHERE shop_id = ? LIMIT 30',
+      [botId]
+    );
+    let kbList = '';
+    if (kbEntries && kbEntries.length > 0) {
+      kbList = '\n\n📚 ข้อมูลร้าน (Knowledge Base):\n' + kbEntries.map(e =>
+        `• ${e.topic}: ${e.content}`
+      ).join('\n');
+    }
+
     // If Gemini API key available — use it
     if (process.env.GEMINI_API_KEY) {
       try {
@@ -466,9 +490,9 @@ router.post('/:botId/simulate', async (req, res) => {
 ข้อมูลร้าน: ${shopInfo.shopName || shop.name || ''} ${shopInfo.phone ? `โทร: ${shopInfo.phone}` : ''} ${shopInfo.openHours ? `เวลาเปิด: ${shopInfo.openHours}` : ''}
 บุคลิก: ${shopInfo.botStyle || 'friendly'}
 ${shopInfo.aiCustomKnowledge ? `ข้อมูลเพิ่มเติม: ${shopInfo.aiCustomKnowledge}` : ''}
-${productList}
+${productList}${kbList}
 
-ตอบภาษาไทย กระชับ เป็นมิตร ไม่เกิน 3-4 ประโยค`;
+ตอบภาษาไทย กระชับ เป็นมิตร ไม่เกิน 3-4 ประโยค ใช้ข้อมูลจาก Knowledge Base เป็นหลัก`;
 
         const geminiRes = await axios.post(
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
