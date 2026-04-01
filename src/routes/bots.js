@@ -1,5 +1,6 @@
 const express = require('express');
 const { getDb } = require('../db');
+const { trackEvent, EVENTS } = require('../events');
 const https = require('https');
 const crypto = require('crypto');
 const axios = require('axios');
@@ -80,6 +81,10 @@ router.post('/setup', async (req, res) => {
         req.userId
       ]);
 
+      // Track bot_activated if LINE token was provided in this update
+      if (lineChannelToken) {
+        trackEvent(existing.id, EVENTS.BOT_ACTIVATED).catch(() => {});
+      }
       return res.json({ success: true, botId: existing.id, shopId: existing.id });
     }
 
@@ -95,6 +100,13 @@ router.post('/setup', async (req, res) => {
       lineChannelToken || '',
       lineChannelSecret || ''
     ]);
+
+    // Track trial_started on new shop creation
+    trackEvent(shopId, EVENTS.TRIAL_STARTED).catch(() => {});
+    // Track bot_activated if LINE token provided
+    if (lineChannelToken) {
+      trackEvent(shopId, EVENTS.BOT_ACTIVATED).catch(() => {});
+    }
 
     res.json({ success: true, botId: shopId, shopId });
   } catch (error) {
@@ -588,5 +600,18 @@ async function syncKBToEngine(shopId, db) {
 
   console.log(`[bots] KB synced to engine: shopId=${shopId}, entries=${knowledgeBase.length}`);
 }
+
+// POST /api/bots/:botId/track-upgrade — called when merchant clicks Upgrade button
+router.post('/:botId/track-upgrade', async (req, res) => {
+  try {
+    const db = getDb();
+    const shop = await db.get('SELECT id FROM shops WHERE id = ? AND user_id = ?', [req.params.botId, req.userId]);
+    if (!shop) return res.status(404).json({ error: 'Not found' });
+    trackEvent(shop.id, EVENTS.UPGRADE_CLICKED).catch(() => {});
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 module.exports = router;

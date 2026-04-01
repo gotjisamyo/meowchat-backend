@@ -432,6 +432,19 @@ async function initDatabase() {
     )
   `);
 
+  // Funnel events table — lightweight event log per shop
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS shop_events (
+      id SERIAL PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      event TEXT NOT NULL,
+      meta TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_shop_events_shop_event ON shop_events(shop_id, event)`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_shop_events_event ON shop_events(event)`);
+
   // Create indexes for performance
   await db.exec(`
     CREATE INDEX IF NOT EXISTS idx_shops_user_id ON shops(user_id);

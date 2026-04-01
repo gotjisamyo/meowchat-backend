@@ -1,6 +1,7 @@
 const express = require('express');
 const { getDb } = require('../db');
 const { authMiddleware, requireAdmin } = require('../auth');
+const { EVENTS } = require('../events');
 
 const router = express.Router();
 
@@ -271,6 +272,32 @@ router.post('/payments/:id/reject', async (req, res) => {
   } catch (error) {
     console.error('Admin reject payment error:', error);
     res.status(500).json({ error: 'Server error', message: 'ไม่สามารถปฏิเสธการแจ้งโอนได้' });
+  }
+});
+
+// GET /api/admin/funnel — conversion funnel stats
+router.get('/funnel', async (_req, res) => {
+  try {
+    const db = getDb();
+    const [s1, s2, s3, s4] = await Promise.all([
+      db.get(`SELECT COUNT(DISTINCT shop_id) as n FROM shop_events WHERE event = ?`, [EVENTS.TRIAL_STARTED]),
+      db.get(`SELECT COUNT(DISTINCT shop_id) as n FROM shop_events WHERE event = ?`, [EVENTS.BOT_ACTIVATED]),
+      db.get(`SELECT COUNT(DISTINCT shop_id) as n FROM shop_events WHERE event = ?`, [EVENTS.FIRST_REPLY]),
+      db.get(`SELECT COUNT(DISTINCT shop_id) as n FROM shop_events WHERE event = ?`, [EVENTS.UPGRADE_CLICKED]),
+    ]);
+    const steps = [
+      { key: 'trial_started',   label: 'ทดลองใช้',         count: Number(s1?.n ?? 0) },
+      { key: 'bot_activated',   label: 'เปิดใช้ Bot',       count: Number(s2?.n ?? 0) },
+      { key: 'first_reply',     label: 'Bot ตอบครั้งแรก',   count: Number(s3?.n ?? 0) },
+      { key: 'upgrade_clicked', label: 'กด Upgrade',        count: Number(s4?.n ?? 0) },
+    ];
+    // Compute drop-off % relative to trial_started
+    const base = steps[0].count || 1;
+    const funnel = steps.map(s => ({ ...s, pct: Math.round((s.count / base) * 100) }));
+    res.json({ funnel });
+  } catch (err) {
+    console.error('Admin funnel error:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 

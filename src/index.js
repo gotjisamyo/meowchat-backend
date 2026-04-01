@@ -138,6 +138,7 @@ app.post('/api/line/test', authMiddleware, (req, res, next) => {
 });
 
 // ─── Internal API — called by meowchat-engine to log conversations ─────────────
+const { trackEvent, EVENTS } = require('./events');
 app.post('/api/internal/log', async (req, res) => {
   const key = req.headers['x-internal-key'];
   if (!key || key !== process.env.INTERNAL_API_KEY) {
@@ -164,6 +165,8 @@ app.post('/api/internal/log', async (req, res) => {
         [botId, lineUserId, lineUserId, escalated ? 1 : 0]
       );
       conv = { id: result.lastID, escalated: escalated ? 1 : 0 };
+      // First conversation for this shop — track funnel event
+      trackEvent(botId, EVENTS.FIRST_REPLY).catch(() => {});
     } else {
       await db.run(
         'UPDATE conversations SET updated_at = CURRENT_TIMESTAMP, escalated = ? WHERE id = ?',
