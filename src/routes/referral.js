@@ -1,0 +1,149 @@
+const express = require('express');
+const { getDb } = require('../db');
+const { authMiddleware } = require('../auth');
+
+const router = express.Router();
+
+// Generate unique referral code for a shop
+function generateCode(shopId) {
+  const base = shopId.toString().replace(/[^a-z0-9]/gi, '').toUpperCase().slice(-6);
+  const rand = Math.random().toString(36).substring(2, 5).toUpperCase();
+  return `MC${base}${rand}`;
+}
+
+// GET /api/referral/my — get or create referral code for current user's shop
+router.get('/my', authMiddleware, async (req, res) => {
+  try {
+    const db = getDb();
+    const shops = await db.all('SELECT id FROM shops WHERE user_id = ? LIMIT 1', [req.userId]);
+    if (!shops.length) return res.status(404).json({ error: 'No shop found' });
+    const shopId = shops[0].id;
+
+    let code = await db.get('SELECT * FROM referral_codes WHERE shop_id = ?', [shopId]);
+    if (!code) {
+      const newCode = generateCode(shopId);
+      await db.run(
+        'INSERT INTO referral_codes (shop_id, code) VALUES (?, ?)',
+        [shopId, newCode]
+      );
+      code = await db.get('SELECT * FROM referral_codes WHERE shop_id = ?', [shopId]);
+    }
+
+    const conversions = await db.all(
+      'SELECT * FROM referral_conversions WHERE referrer_shop_id = ? ORDER BY created_at DESC',
+      [shopId]
+    );
+
+    res.json({
+      code: code.code,
+      clicks: code.clicks,
+      conversions: code.conversions,
+      rewards_earned: conversions.filter(c => c.rewarded).length,
+      link: `https://my.meowchat.store/onboarding?ref=${code.code}`,
+    });
+  } catch (err) {
+    console.error('Referral my error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/referral/click — track click (called from onboarding page load)
+router.post('/click', async (req, res) => {
+  try {
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ error: 'code required' });
+    const db = getDb();
+    await db.run('UPDATE referral_codes SET clicks = clicks + 1 WHERE code = ?', [code]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/referral/convert — called after new shop created via referral link
+router.post('/convert', authMiddleware, async (req, res) => {
+  try {
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ error: 'code required' });
+    const db = getDb();
+
+    const referralCode = await db.get('SELECT * FROM referral_codes WHERE code = ?', [code]);
+    if (!referralCode) return res.status(404).json({ error: 'Invalid referral code' });
+
+    // Get referred shop (current user's shop)
+    const shops = await db.all('SELECT id FROM shops WHERE user_id = ? LIMIT 1', [req.userId]);
+    if (!shops.length) return res.status(404).json({ error: 'No shop found' });
+    const referredShopId = shops[0].id;
+
+    // Prevent self-referral
+    if (referralCode.shop_id === referredShopId) {
+      return res.status(400).json({ error: 'Cannot refer yourself' });
+    }
+
+    // Prevent duplicate conversion
+    const existing = await db.get(
+      'SELECT id FROM referral_conversions WHERE referred_shop_id = ?',
+      [referredShopId]
+    );
+    if (existing) return res.json({ ok: true, already_tracked: true });
+
+    // Record conversion
+    await db.run(
+      'INSERT INTO referral_conversions (referrer_shop_id, referred_shop_id, code) VALUES (?, ?, ?)',
+      [referralCode.shop_id, referredShopId, code]
+    );
+    await db.run('UPDATE referral_codes SET conversions = conversions + 1 WHERE code = ?', [code]);
+
+    console.log(`[referral] conversion: code=${code} referrer=${referralCode.shop_id} referred=${referredShopId}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Referral convert error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/referral/reward — called when referred shop upgrades to paid
+// Extends referrer's subscription by 30 days
+router.post('/reward', async (req, res) => {
+  try {
+    const { referred_shop_id } = req.body;
+    if (!referred_shop_id) return res.status(400).json({ error: 'referred_shop_id required' });
+    const db = getDb();
+
+    const conversion = await db.get(
+      'SELECT * FROM referral_conversions WHERE referred_shop_id = ? AND rewarded = FALSE',
+      [referred_shop_id]
+    );
+    if (!conversion) return res.json({ ok: true, no_pending_reward: true });
+
+    // Extend referrer's trial by 30 days
+    const referrerShop = await db.get('SELECT * FROM shops WHERE id = ?', [conversion.referrer_shop_id]);
+    if (referrerShop) {
+      const base = referrerShop.trial_ends_at ? new Date(referrerShop.trial_ends_at) : new Date();
+      const newEndsAt = new Date(base.getTime() + 30 * 24 * 60 * 60 * 1000);
+      await db.run(
+        `UPDATE shops SET trial_ends_at = ?, subscription_status = 'trial', bot_locked = FALSE, trial_reminder_sent = FALSE WHERE id = ?`,
+        [newEndsAt.toISOString(), conversion.referrer_shop_id]
+      );
+
+      // Notify referrer
+      if (referrerShop.line_notify_token) {
+        const msg = `\n🎁 ยินดีด้วย! เพื่อนของคุณ Upgrade แล้ว\nคุณได้รับ MeowChat ฟรี 1 เดือน! 🐱\n\nต่ออายุถึง: ${newEndsAt.toLocaleDateString('th-TH')}`;
+        fetch('https://notify-api.line.me/api/notify', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${referrerShop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ message: msg }),
+        }).catch(() => {});
+      }
+    }
+
+    await db.run('UPDATE referral_conversions SET rewarded = TRUE WHERE id = ?', [conversion.id]);
+    console.log(`[referral] rewarded referrer=${conversion.referrer_shop_id}`);
+    res.json({ ok: true, rewarded: true });
+  } catch (err) {
+    console.error('Referral reward error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+module.exports = router;

@@ -105,6 +105,30 @@ async function initDatabase() {
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS line_notify_token TEXT DEFAULT ''`);
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMP`);
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS trial_reminder_sent BOOLEAN DEFAULT FALSE`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS subscription_status TEXT DEFAULT 'trial'`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS bot_locked BOOLEAN DEFAULT FALSE`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS grace_period_ends_at TIMESTAMP`);
+  // Referral system
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS referral_codes (
+      id SERIAL PRIMARY KEY,
+      shop_id TEXT NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+      code TEXT UNIQUE NOT NULL,
+      clicks INTEGER DEFAULT 0,
+      conversions INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS referral_conversions (
+      id SERIAL PRIMARY KEY,
+      referrer_shop_id TEXT NOT NULL,
+      referred_shop_id TEXT NOT NULL,
+      code TEXT NOT NULL,
+      rewarded BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 
   // Create products table (linked to shop)
   await db.exec(`

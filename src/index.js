@@ -119,6 +119,7 @@ app.use('/api/team', require('./routes/team'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/payment', require('./routes/payment'));
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/referral', require('./routes/referral'));
 
 // Merchant dashboard routes
 const botsRouter = require('./routes/bots');
@@ -321,15 +322,60 @@ async function sendWeeklySummary() {
   }
 }
 
+// Subscription State Machine — runs daily
+// trial → grace (3 days) → expired+locked
+async function runSubscriptionStateMachine() {
+  try {
+    const db = getDb();
+    if (!db) return;
+
+    // 1. Trial expired → enter grace period (3 days)
+    await db.run(`
+      UPDATE shops
+      SET subscription_status = 'grace',
+          grace_period_ends_at = NOW() + INTERVAL '3 days'
+      WHERE subscription_status = 'trial'
+        AND trial_ends_at < NOW()
+        AND bot_locked = FALSE
+    `);
+
+    // 2. Grace period over → lock bot
+    const expired = await db.all(`
+      SELECT id, name, line_notify_token
+      FROM shops
+      WHERE subscription_status = 'grace'
+        AND grace_period_ends_at < NOW()
+        AND bot_locked = FALSE
+    `);
+    for (const shop of expired) {
+      await db.run(`UPDATE shops SET bot_locked = TRUE, subscription_status = 'expired' WHERE id = ?`, [shop.id]);
+      // Notify owner
+      if (shop.line_notify_token) {
+        const msg = `\n🔒 บอท MeowChat ของ "${shop.name}" หยุดทำงานชั่วคราว\n\nกรุณา Upgrade เพื่อเปิดใช้งานอีกครั้ง\n👉 my.meowchat.store/subscription\nPro ฿376/เดือน`;
+        fetch('https://notify-api.line.me/api/notify', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ message: msg }),
+        }).catch(() => {});
+      }
+      console.log(`[state-machine] locked bot for shop=${shop.id}`);
+    }
+  } catch (err) {
+    console.error('[state-machine] error:', err.message);
+  }
+}
+
 // Run all schedulers: startup delay then every 24h
 setTimeout(() => {
   sendTrialReminders();
   sendDay3Notifications();
   sendWeeklySummary();
+  runSubscriptionStateMachine();
   setInterval(() => {
     sendTrialReminders();
     sendDay3Notifications();
     sendWeeklySummary();
+    runSubscriptionStateMachine();
   }, 24 * 60 * 60 * 1000);
 }, 30 * 1000);
 
