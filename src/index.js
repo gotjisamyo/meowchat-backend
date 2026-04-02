@@ -120,6 +120,7 @@ app.use('/api/projects', require('./routes/projects'));
 app.use('/api/payment', require('./routes/payment'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/referral', require('./routes/referral'));
+app.use('/api/credits', authMiddleware, require('./routes/credits'));
 
 // Merchant dashboard routes
 const botsRouter = require('./routes/bots');
@@ -198,6 +199,33 @@ app.post('/api/internal/log', async (req, res) => {
     res.json({ ok: true, conversationId: conv.id });
   } catch (err) {
     console.error('[internal/log] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Internal API — slip order notification from engine ───────────────────────
+app.post('/api/internal/slip-order', async (req, res) => {
+  const key = req.headers['x-internal-key'];
+  if (!key || key !== process.env.INTERNAL_API_KEY) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  const { botId, lineUserId, amount, date, refNumber, bankName, mode } = req.body;
+  if (!botId || !lineUserId) {
+    return res.status(400).json({ error: 'botId and lineUserId required' });
+  }
+  try {
+    const { getDb } = require('./db');
+    const db = await getDb();
+    const status = mode === 'auto' ? 'approved' : 'pending';
+    await db.run(
+      `INSERT INTO payment_notifications
+         (shop_id, payer_name, amount, transfer_date, bank_name, account_name, account_number, ref_number, status)
+       VALUES (?, ?, ?, ?, ?, 'MeowChat', '-', ?, ?)`,
+      [botId, lineUserId, amount ?? 0, date ?? new Date().toISOString().slice(0,10), bankName ?? '-', refNumber ?? null, status]
+    );
+    res.json({ ok: true, status });
+  } catch (err) {
+    console.error('[internal/slip-order] error:', err);
     res.status(500).json({ error: err.message });
   }
 });

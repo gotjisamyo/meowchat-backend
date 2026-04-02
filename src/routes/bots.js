@@ -251,7 +251,9 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Bot not found', message: 'ไม่พบ bot' });
     }
 
-    const { line_notify_token, line_access_token, line_channel_secret } = req.body;
+    const { line_notify_token, line_access_token, line_channel_secret, slip_verify_mode } = req.body;
+    const allowedSlipModes = ['off', 'auto', 'manual'];
+    const slipMode = slip_verify_mode && allowedSlipModes.includes(slip_verify_mode) ? slip_verify_mode : null;
     await db.run(`
       UPDATE shops
       SET name = COALESCE(?, name),
@@ -259,6 +261,7 @@ router.put('/:id', async (req, res) => {
           line_notify_token = COALESCE(?, line_notify_token),
           line_access_token = COALESCE(?, line_access_token),
           line_channel_secret = COALESCE(?, line_channel_secret),
+          slip_verify_mode = COALESCE(?, slip_verify_mode),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
     `, [
@@ -267,6 +270,7 @@ router.put('/:id', async (req, res) => {
       line_notify_token !== undefined ? line_notify_token : null,
       line_access_token || null,
       line_channel_secret || null,
+      slipMode,
       req.params.id,
       req.userId
     ]);
@@ -638,6 +642,7 @@ async function syncBotToEngine(shopId, db) {
     showBranding: shop.plan !== 'active',
     subscriptionStatus: shop.subscription_status || 'trial',
     botLocked: shop.bot_locked || false,
+    slipVerifyMode: shop.slip_verify_mode || 'off',
   };
 
   await fetch(`${engineUrl}/admin/bots`, {

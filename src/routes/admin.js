@@ -368,4 +368,41 @@ router.get('/analytics/platform', async (_req, res) => {
   }
 });
 
+// POST /api/admin/credits/:id/approve — approve a pending credit purchase
+router.post('/credits/:id/approve', async (req, res) => {
+  try {
+    const db = getDb();
+    await db.run(
+      `UPDATE merchant_credits SET status = 'approved' WHERE id = ?`,
+      [req.params.id]
+    );
+    await db.run(
+      `UPDATE payment_notifications SET status = 'approved' WHERE id =
+        (SELECT payment_notification_id FROM merchant_credits WHERE id = ?)`,
+      [req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/credits/pending — list pending credit purchases
+router.get('/credits/pending', async (_req, res) => {
+  try {
+    const db = getDb();
+    const rows = await db.all(
+      `SELECT mc.*, s.name as shop_name, cp.name as pack_name, cp.price
+       FROM merchant_credits mc
+       JOIN shops s ON s.id = mc.shop_id
+       LEFT JOIN credit_packs cp ON cp.id = mc.pack_id
+       WHERE mc.status = 'pending'
+       ORDER BY mc.created_at DESC`
+    );
+    res.json({ pendingCredits: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

@@ -403,6 +403,52 @@ async function initDatabase() {
   `);
   await db.exec(`CREATE INDEX IF NOT EXISTS idx_conv_messages_conv_id ON conversation_messages(conversation_id)`);
 
+  // Credit packs — predefined top-up bundles
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS credit_packs (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      messages INTEGER NOT NULL,
+      price REAL NOT NULL,
+      is_active INTEGER DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Merchant extra credits — purchased top-ups per shop
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS merchant_credits (
+      id SERIAL PRIMARY KEY,
+      shop_id TEXT NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+      messages_added INTEGER NOT NULL,
+      messages_used INTEGER DEFAULT 0,
+      pack_id INTEGER REFERENCES credit_packs(id),
+      payment_notification_id INTEGER,
+      status TEXT DEFAULT 'pending',
+      expires_at TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_merchant_credits_shop ON merchant_credits(shop_id)`);
+
+  // Shop bot settings — slip verification mode per shop
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS slip_verify_mode TEXT DEFAULT 'off'`);
+
+  // Seed credit packs
+  await db.exec(`
+    INSERT INTO credit_packs (id, name, messages, price, is_active)
+    OVERRIDING SYSTEM VALUE
+    VALUES
+      (1, 'S', 300, 79, 1),
+      (2, 'M', 1000, 199, 1),
+      (3, 'L', 3000, 499, 1)
+    ON CONFLICT (id) DO UPDATE SET
+      name = excluded.name,
+      messages = excluded.messages,
+      price = excluded.price,
+      is_active = excluded.is_active
+  `);
+
   // Add stripe_price_id to plans if missing (safe ADD COLUMN IF NOT EXISTS)
   await db.exec(`ALTER TABLE plans ADD COLUMN IF NOT EXISTS stripe_price_id TEXT`);
 
@@ -468,10 +514,11 @@ async function initDatabase() {
     INSERT INTO plans (id, name, price, max_chats, max_agents, features, is_active)
     OVERRIDING SYSTEM VALUE
     VALUES
-      (1, 'Trial', 0, 300, 1, '["ทดลองใช้ฟรี 14 วัน","300 ข้อความ/เดือน","1 LINE OA","Knowledge Base 5 รายการ","ซัพพอร์ตทาง LINE"]', 1),
-      (2, 'Pro', 376, 2000, 1, '["2,000 ข้อความ/เดือน","1 LINE OA","Knowledge Base ไม่จำกัด","Analytics พื้นฐาน","AI Auto Reply","ซัพพอร์ตทาง LINE & Email"]', 1),
-      (3, 'Pro+', 790, 10000, 3, '["10,000 ข้อความ/เดือน","3 LINE OA","Knowledge Base ไม่จำกัด","Analytics ครบครัน","AI Auto Reply","Priority Support"]', 1),
-      (4, 'Enterprise', 2990, -1, -1, '["ข้อความไม่จำกัด","LINE OA ไม่จำกัด","Knowledge Base ไม่จำกัด","Dedicated Support","SLA 99.9%","Custom integration","White-label option"]', 1)
+      (1, 'Trial', 0, 300, 1, '["ทดลองใช้ฟรี 14 วัน","300 ข้อความ/เดือน","1 LINE OA","Knowledge Base 5 รายการ","ซัพพอร์ตทาง LINE","ตรวจสลิปอัตโนมัติ"]', 1),
+      (2, 'Starter', 199, 500, 1, '["500 ข้อความ/เดือน","1 LINE OA","Knowledge Base ไม่จำกัด","Analytics พื้นฐาน","AI Auto Reply","ซัพพอร์ตทาง LINE","ตรวจสลิปอัตโนมัติ"]', 1),
+      (3, 'Pro', 490, 2000, 1, '["2,000 ข้อความ/เดือน","1 LINE OA","Knowledge Base ไม่จำกัด","Analytics ครบครัน","AI Auto Reply","ซื้อเครดิตเพิ่มได้","ซัพพอร์ตทาง LINE & Email","ตรวจสลิปอัตโนมัติ"]', 1),
+      (4, 'Pro+', 990, 10000, 3, '["10,000 ข้อความ/เดือน","3 LINE OA","Knowledge Base ไม่จำกัด","Analytics ครบครัน","AI Auto Reply","ซื้อเครดิตเพิ่มได้","Priority Support","ตรวจสลิปอัตโนมัติ"]', 1),
+      (5, 'Enterprise', 3990, -1, -1, '["ข้อความไม่จำกัด","LINE OA ไม่จำกัด","Knowledge Base ไม่จำกัด","Dedicated Support","SLA 99.9%","Custom integration","White-label option","ตรวจสลิปอัตโนมัติ"]', 1)
     ON CONFLICT (id) DO UPDATE SET
       name = excluded.name,
       price = excluded.price,
