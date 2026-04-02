@@ -673,5 +673,97 @@ router.post('/:botId/track-upgrade', async (req, res) => {
   }
 });
 
+// GET /api/bots/:botId/broadcast/recipients — count eligible recipients
+router.get('/:botId/broadcast/recipients', async (req, res) => {
+  try {
+    const db = getDb();
+    const shop = await db.get('SELECT id FROM shops WHERE id = ? AND user_id = ?', [req.params.botId, req.userId]);
+    if (!shop) return res.status(404).json({ error: 'Not found' });
+    const row = await db.get(
+      'SELECT COUNT(DISTINCT line_user_id) as count FROM conversations WHERE shop_id = ?',
+      [req.params.botId]
+    );
+    res.json({ count: Number(row?.count || 0) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/bots/:botId/broadcast/history — list past broadcasts
+router.get('/:botId/broadcast/history', async (req, res) => {
+  try {
+    const db = getDb();
+    const shop = await db.get('SELECT id FROM shops WHERE id = ? AND user_id = ?', [req.params.botId, req.userId]);
+    if (!shop) return res.status(404).json({ error: 'Not found' });
+    const rows = await db.all(
+      'SELECT * FROM broadcasts WHERE shop_id = ? ORDER BY created_at DESC LIMIT 20',
+      [req.params.botId]
+    );
+    res.json({ broadcasts: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/bots/:botId/broadcast — send broadcast to all LINE users
+router.post('/:botId/broadcast', async (req, res) => {
+  try {
+    const db = getDb();
+    const shop = await db.get('SELECT * FROM shops WHERE id = ? AND user_id = ?', [req.params.botId, req.userId]);
+    if (!shop) return res.status(404).json({ error: 'Not found' });
+
+    const { message } = req.body;
+    if (!message?.trim()) return res.status(400).json({ error: 'message required' });
+
+    // Get all distinct LINE user IDs for this shop
+    const users = await db.all(
+      'SELECT DISTINCT line_user_id FROM conversations WHERE shop_id = ?',
+      [req.params.botId]
+    );
+    const userIds = users.map(u => u.line_user_id).filter(Boolean);
+
+    // Create broadcast record
+    const result = await db.run(
+      `INSERT INTO broadcasts (shop_id, message, recipient_count, status) VALUES (?, ?, ?, 'sending') RETURNING id`,
+      [req.params.botId, message.trim(), userIds.length]
+    );
+    const broadcastId = result.lastInsertRowid;
+
+    res.json({ ok: true, broadcastId, recipientCount: userIds.length });
+
+    // Send in background — LINE Multicast (batch 500)
+    const accessToken = shop.line_access_token;
+    if (!accessToken || userIds.length === 0) {
+      await db.run(`UPDATE broadcasts SET status = 'sent', sent_count = 0, sent_at = CURRENT_TIMESTAMP WHERE id = ?`, [broadcastId]);
+      return;
+    }
+
+    let sentCount = 0;
+    const BATCH = 500;
+    for (let i = 0; i < userIds.length; i += BATCH) {
+      const batch = userIds.slice(i, i + BATCH);
+      try {
+        await fetch('https://api.line.me/v2/bot/message/multicast', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+          body: JSON.stringify({ to: batch, messages: [{ type: 'text', text: message.trim() }] }),
+        });
+        sentCount += batch.length;
+      } catch (e) {
+        console.error('[broadcast] multicast batch error:', e.message);
+      }
+    }
+
+    await db.run(
+      `UPDATE broadcasts SET status = 'sent', sent_count = ?, sent_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [sentCount, broadcastId]
+    );
+    console.log(`[broadcast] shopId=${req.params.botId} sent=${sentCount}/${userIds.length}`);
+  } catch (err) {
+    console.error('[broadcast] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
 // GEMINI_API_KEY env var added 1775060471

@@ -403,6 +403,21 @@ async function initDatabase() {
   `);
   await db.exec(`CREATE INDEX IF NOT EXISTS idx_conv_messages_conv_id ON conversation_messages(conversation_id)`);
 
+  // Broadcasts table — bulk message campaigns sent to all LINE users
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS broadcasts (
+      id SERIAL PRIMARY KEY,
+      shop_id TEXT NOT NULL REFERENCES shops(id),
+      message TEXT NOT NULL,
+      recipient_count INTEGER DEFAULT 0,
+      sent_count INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending','sending','sent','failed')),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      sent_at TIMESTAMP
+    )
+  `);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_broadcasts_shop_id ON broadcasts(shop_id)`);
+
   // Credit packs — predefined top-up bundles
   await db.exec(`
     CREATE TABLE IF NOT EXISTS credit_packs (
