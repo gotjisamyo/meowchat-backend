@@ -301,4 +301,71 @@ router.get('/funnel', async (_req, res) => {
   }
 });
 
+// GET /api/admin/analytics/platform — cross-merchant bot activity
+router.get('/analytics/platform', async (_req, res) => {
+  try {
+    const db = getDb();
+    const [totals, topShops, topWords] = await Promise.all([
+      // Platform-wide totals (last 30 days)
+      db.get(`
+        SELECT
+          COUNT(DISTINCT cv.id) as total_conversations,
+          COUNT(cm.id) as total_messages,
+          COUNT(DISTINCT cv.line_user_id) as unique_users,
+          COUNT(CASE WHEN cv.escalated = 1 THEN 1 END) as escalations
+        FROM conversations cv
+        LEFT JOIN conversation_messages cm ON cm.conversation_id = cv.id
+        WHERE cv.created_at >= NOW() - INTERVAL '30 days'
+      `),
+      // Top 5 most active shops by message count
+      db.all(`
+        SELECT cv.shop_id, s.name as shop_name,
+          COUNT(cm.id) as message_count,
+          COUNT(DISTINCT cv.line_user_id) as unique_users
+        FROM conversations cv
+        JOIN conversation_messages cm ON cm.conversation_id = cv.id
+        LEFT JOIN shops s ON s.id = cv.shop_id
+        WHERE cv.created_at >= NOW() - INTERVAL '30 days'
+        GROUP BY cv.shop_id, s.name
+        ORDER BY message_count DESC
+        LIMIT 5
+      `),
+      // Top keywords across all user messages
+      db.all(`
+        SELECT cm.content FROM conversation_messages cm
+        WHERE cm.role = 'user' AND cm.created_at >= NOW() - INTERVAL '30 days'
+        LIMIT 500
+      `),
+    ]);
+
+    // Simple keyword frequency
+    const stopwords = new Set(['ครับ','ค่ะ','คะ','นะ','ๆ','และ','แล้ว','ก็','ได้','ไม่','มี','ที่','จะ','ว่า','ใน','ของ','กับ','หรือ','แต่','เป็น','ให้','มา','ไป','อยู่']);
+    const freq = {};
+    for (const { content } of topWords) {
+      const words = content.replace(/[^\u0E00-\u0E7Fa-zA-Z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 1 && !stopwords.has(w));
+      for (const w of words) freq[w] = (freq[w] || 0) + 1;
+    }
+    const keywords = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([word, count]) => ({ word, count }));
+
+    res.json({
+      totals: {
+        totalConversations: Number(totals?.total_conversations || 0),
+        totalMessages: Number(totals?.total_messages || 0),
+        uniqueUsers: Number(totals?.unique_users || 0),
+        escalations: Number(totals?.escalations || 0),
+      },
+      topShops: topShops.map(s => ({
+        shopId: s.shop_id,
+        shopName: s.shop_name || s.shop_id,
+        messageCount: Number(s.message_count || 0),
+        uniqueUsers: Number(s.unique_users || 0),
+      })),
+      keywords,
+    });
+  } catch (err) {
+    console.error('Admin platform analytics error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
