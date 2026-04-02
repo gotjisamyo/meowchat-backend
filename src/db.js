@@ -448,6 +448,7 @@ async function initDatabase() {
 
   // Shop bot settings — slip verification mode per shop
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS slip_verify_mode TEXT DEFAULT 'off'`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS quick_replies TEXT DEFAULT '[]'`);
 
   // Seed credit packs
   await db.exec(`

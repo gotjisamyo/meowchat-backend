@@ -643,6 +643,7 @@ async function syncBotToEngine(shopId, db) {
     subscriptionStatus: shop.subscription_status || 'trial',
     botLocked: shop.bot_locked || false,
     slipVerifyMode: shop.slip_verify_mode || 'off',
+    quickReplies: (() => { try { return JSON.parse(shop.quick_replies || '[]'); } catch { return []; } })(),
   };
 
   await fetch(`${engineUrl}/admin/bots`, {
@@ -761,6 +762,39 @@ router.post('/:botId/broadcast', async (req, res) => {
     console.log(`[broadcast] shopId=${req.params.botId} sent=${sentCount}/${userIds.length}`);
   } catch (err) {
     console.error('[broadcast] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/bots/:botId/quick-replies
+router.get('/:botId/quick-replies', async (req, res) => {
+  try {
+    const db = getDb();
+    const shop = await db.get('SELECT id, quick_replies FROM shops WHERE id = ? AND user_id = ?', [req.params.botId, req.userId]);
+    if (!shop) return res.status(404).json({ error: 'Not found' });
+    let items = [];
+    try { items = JSON.parse(shop.quick_replies || '[]'); } catch {}
+    res.json({ items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/bots/:botId/quick-replies
+router.put('/:botId/quick-replies', async (req, res) => {
+  try {
+    const db = getDb();
+    const shop = await db.get('SELECT id FROM shops WHERE id = ? AND user_id = ?', [req.params.botId, req.userId]);
+    if (!shop) return res.status(404).json({ error: 'Not found' });
+    const items = (req.body.items || []).slice(0, 13).map(item => ({
+      label: String(item.label || '').slice(0, 20),
+      text: String(item.text || '').slice(0, 300),
+    })).filter(item => item.label && item.text);
+    await db.run('UPDATE shops SET quick_replies = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [JSON.stringify(items), req.params.botId]);
+    // Re-sync to engine
+    syncBotToEngine(req.params.botId, db).catch(e => console.warn('[bots] engine sync failed:', e));
+    res.json({ ok: true, items });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
