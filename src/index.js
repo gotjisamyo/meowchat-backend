@@ -161,10 +161,10 @@ app.post('/api/internal/log', async (req, res) => {
     if (!conv) {
       const result = await db.run(
         `INSERT INTO conversations (shop_id, line_user_id, customer_name, status, escalated)
-         VALUES (?, ?, ?, 'active', ?)`,
+         VALUES (?, ?, ?, 'active', ?) RETURNING id`,
         [botId, lineUserId, lineUserId, escalated ? 1 : 0]
       );
-      conv = { id: result.lastID, escalated: escalated ? 1 : 0 };
+      conv = { id: result.lastInsertRowid, escalated: escalated ? 1 : 0 };
       // First conversation for this shop — track funnel event
       trackEvent(botId, EVENTS.FIRST_REPLY).catch(() => {});
     } else {
@@ -198,6 +198,82 @@ app.post('/api/internal/log', async (req, res) => {
     res.json({ ok: true, conversationId: conv.id });
   } catch (err) {
     console.error('[internal/log] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Analytics: what customers are asking about ──────────────────────────────
+app.get('/api/bots/:botId/analytics/topics', authenticateToken, async (req, res) => {
+  try {
+    const { getDb } = require('./db');
+    const db = await getDb();
+    const { botId } = req.params;
+    const days = parseInt(req.query.days || '30');
+
+    // Get all user messages for this bot in the time range
+    const messages = await db.all(
+      `SELECT cm.content FROM conversation_messages cm
+       JOIN conversations cv ON cv.id = cm.conversation_id
+       WHERE cv.shop_id = ? AND cm.role = 'user'
+         AND cm.created_at >= NOW() - INTERVAL '${days} days'
+       ORDER BY cm.created_at DESC LIMIT 1000`,
+      [botId]
+    );
+
+    // Simple keyword frequency analysis
+    const stopwords = new Set(['ครับ','ค่ะ','คะ','นะ','ๆ','และ','แล้ว','ก็','ได้','ไม่','มี','ที่','จะ','ว่า','ใน','ของ','กับ','หรือ','แต่','เป็น','ให้','มา','ไป','อยู่','อยาก','ต้อง','ขอ']);
+    const freq = {};
+    for (const { content } of messages) {
+      const words = content.replace(/[^\u0E00-\u0E7Fa-zA-Z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 1 && !stopwords.has(w));
+      for (const w of words) {
+        freq[w] = (freq[w] || 0) + 1;
+      }
+    }
+
+    // Top keywords
+    const topKeywords = Object.entries(freq)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20)
+      .map(([word, count]) => ({ word, count }));
+
+    // Conversation stats
+    const stats = await db.get(
+      `SELECT
+         COUNT(DISTINCT cv.id) as total_conversations,
+         COUNT(cm.id) as total_messages,
+         COUNT(DISTINCT cv.line_user_id) as unique_users,
+         COUNT(CASE WHEN cv.escalated = 1 THEN 1 END) as escalations
+       FROM conversations cv
+       LEFT JOIN conversation_messages cm ON cm.conversation_id = cv.id
+       WHERE cv.shop_id = ? AND cv.created_at >= NOW() - INTERVAL '${days} days'`,
+      [botId]
+    );
+
+    // Recent sample messages (last 10 unique users' first message)
+    const recentSamples = await db.all(
+      `SELECT DISTINCT ON (cv.line_user_id) cm.content, cv.created_at
+       FROM conversation_messages cm
+       JOIN conversations cv ON cv.id = cm.conversation_id
+       WHERE cv.shop_id = ? AND cm.role = 'user'
+         AND cm.created_at >= NOW() - INTERVAL '${days} days'
+       ORDER BY cv.line_user_id, cm.created_at ASC
+       LIMIT 10`,
+      [botId]
+    );
+
+    res.json({
+      days,
+      stats: {
+        totalConversations: Number(stats?.total_conversations || 0),
+        totalMessages: Number(stats?.total_messages || 0),
+        uniqueUsers: Number(stats?.unique_users || 0),
+        escalations: Number(stats?.escalations || 0),
+      },
+      topKeywords,
+      recentSamples: recentSamples.map(r => ({ message: r.content, at: r.created_at })),
+    });
+  } catch (err) {
+    console.error('[analytics/topics] error:', err);
     res.status(500).json({ error: err.message });
   }
 });
