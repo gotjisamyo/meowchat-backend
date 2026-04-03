@@ -494,6 +494,17 @@ async function initDatabase() {
     )
   `);
 
+  // LINE Channel trial guard — 1 LINE OA = 1 trial, ever
+  // Prevents abuse via new email registrations reusing the same LINE Channel ID.
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS line_channel_trials (
+      line_channel_id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      user_id INTEGER NOT NULL,
+      trial_started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   // Funnel events table — lightweight event log per shop
   await db.exec(`
     CREATE TABLE IF NOT EXISTS shop_events (

@@ -44,6 +44,23 @@ router.post('/', authMiddleware, async (req, res) => {
     // Generate shop ID
     const shopId = 'shop_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 
+    // Guard: if a LINE Channel ID is provided, verify it hasn't been used for a trial before.
+    // This prevents users from abusing the free trial by registering with a new email
+    // but reusing the same LINE OA (1 LINE OA = 1 trial, ever).
+    if (lineChannelId && lineChannelId.trim()) {
+      const existingTrial = await db.get(
+        'SELECT line_channel_id, shop_id FROM line_channel_trials WHERE line_channel_id = ?',
+        [lineChannelId.trim()]
+      );
+      if (existingTrial) {
+        return res.status(409).json({
+          error: 'Trial already used',
+          message: 'LINE OA นี้เคยใช้สิทธิ์ทดลองฟรีแล้ว กรุณาเลือกแผนที่เหมาะสม',
+          redirect: '/pricing'
+        });
+      }
+    }
+
     // Insert shop (TEXT primary key — no RETURNING id needed, use shopId directly)
     await db.run(`
       INSERT INTO shops (id, user_id, name, description, line_channel_id, line_channel_secret, line_access_token)
@@ -66,6 +83,16 @@ router.post('/', authMiddleware, async (req, res) => {
         INSERT INTO subscriptions (shop_id, plan_id, status, payment_method, payment_status)
         VALUES (?, 1, 'trial', 'free', 'paid')
       `, [shopId]);
+
+      // Record this LINE Channel ID as trial-used so it cannot claim another trial.
+      if (lineChannelId && lineChannelId.trim()) {
+        await db.run(
+          `INSERT INTO line_channel_trials (line_channel_id, shop_id, user_id)
+           VALUES (?, ?, ?)
+           ON CONFLICT (line_channel_id) DO NOTHING`,
+          [lineChannelId.trim(), shopId, req.userId]
+        );
+      }
     } catch (subErr) {
       console.error('Create trial subscription error (non-fatal):', subErr.message);
     }
@@ -129,6 +156,22 @@ router.put('/:id', authMiddleware, async (req, res) => {
         error: 'Shop not found',
         message: 'ไม่พบร้านค้า'
       });
+    }
+
+    // Guard: if changing LINE Channel ID, ensure the new one hasn't been trial-used by a different shop.
+    if (lineChannelId && lineChannelId.trim()) {
+      const existingTrial = await db.get(
+        'SELECT shop_id FROM line_channel_trials WHERE line_channel_id = ?',
+        [lineChannelId.trim()]
+      );
+      // Block only if the trial record belongs to a *different* shop
+      if (existingTrial && existingTrial.shop_id !== req.params.id) {
+        return res.status(409).json({
+          error: 'Trial already used',
+          message: 'LINE OA นี้เคยใช้สิทธิ์ทดลองฟรีแล้ว กรุณาเลือกแผนที่เหมาะสม',
+          redirect: '/pricing'
+        });
+      }
     }
 
     // Update shop
