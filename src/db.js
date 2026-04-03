@@ -541,11 +541,11 @@ async function initDatabase() {
     INSERT INTO plans (id, name, price, max_chats, max_agents, features, is_active)
     OVERRIDING SYSTEM VALUE
     VALUES
-      (1, 'Trial', 0, 300, 1, '["ทดลองใช้ฟรี 14 วัน","300 ข้อความ/เดือน","1 LINE OA","Knowledge Base 5 รายการ","ซัพพอร์ตทาง LINE","ตรวจสลิปอัตโนมัติ"]', 1),
-      (2, 'Starter', 199, 500, 1, '["500 ข้อความ/เดือน","1 LINE OA","Knowledge Base ไม่จำกัด","Analytics พื้นฐาน","AI Auto Reply","ซัพพอร์ตทาง LINE","ตรวจสลิปอัตโนมัติ"]', 1),
-      (3, 'Pro', 490, 2000, 1, '["2,000 ข้อความ/เดือน","1 LINE OA","Knowledge Base ไม่จำกัด","Analytics ครบครัน","AI Auto Reply","ซื้อเครดิตเพิ่มได้","ซัพพอร์ตทาง LINE & Email","ตรวจสลิปอัตโนมัติ"]', 1),
-      (4, 'Pro+', 990, 10000, 3, '["10,000 ข้อความ/เดือน","3 LINE OA","Knowledge Base ไม่จำกัด","Analytics ครบครัน","AI Auto Reply","ซื้อเครดิตเพิ่มได้","Priority Support","ตรวจสลิปอัตโนมัติ"]', 1),
-      (5, 'Enterprise', 3990, -1, -1, '["ข้อความไม่จำกัด","LINE OA ไม่จำกัด","Knowledge Base ไม่จำกัด","Dedicated Support","SLA 99.9%","Custom integration","White-label option","ตรวจสลิปอัตโนมัติ"]', 1)
+      (1, 'Trial', 0, 3000, 1, '["ทดลองฟรี 14 วัน","3,000 ข้อความ/เดือน","1 LINE OA","Knowledge Base ไม่จำกัด","Analytics พื้นฐาน","AI Auto Reply","ซัพพอร์ตทาง LINE","ตรวจสลิปอัตโนมัติ"]', 1),
+      (2, 'Starter', 490, 3000, 1, '["3,000 ข้อความ/เดือน","1 LINE OA","Knowledge Base ไม่จำกัด","Analytics พื้นฐาน","AI Auto Reply","ซื้อเครดิตเพิ่มได้","ซัพพอร์ตทาง LINE","ตรวจสลิปอัตโนมัติ"]', 1),
+      (3, 'Pro', 990, 15000, 3, '["15,000 ข้อความ/เดือน","3 LINE OA","Knowledge Base ไม่จำกัด","Analytics ครบครัน","AI Auto Reply","ซื้อเครดิตเพิ่มได้","ซัพพอร์ตทาง LINE & Email","ตรวจสลิปอัตโนมัติ"]', 1),
+      (4, 'Business', 2490, 50000, 5, '["50,000 ข้อความ/เดือน","5 LINE OA","Knowledge Base ไม่จำกัด","Analytics ครบครัน","AI Auto Reply","ซื้อเครดิตเพิ่มได้","Priority Support","ตรวจสลิปอัตโนมัติ"]', 1),
+      (5, 'Enterprise', 0, -1, -1, '["ข้อความไม่จำกัด","LINE OA ไม่จำกัด","Knowledge Base ไม่จำกัด","Dedicated Support","SLA 99.9%","Custom integration","White-label option","ตรวจสลิปอัตโนมัติ"]', 1)
     ON CONFLICT (id) DO UPDATE SET
       name = excluded.name,
       price = excluded.price,
