@@ -231,7 +231,7 @@ app.post('/api/internal/slip-order', async (req, res) => {
 });
 
 // ─── Analytics: what customers are asking about ──────────────────────────────
-app.get('/api/bots/:botId/analytics/topics', authenticateToken, async (req, res) => {
+app.get('/api/bots/:botId/analytics/topics', authMiddleware, async (req, res) => {
   try {
     const { getDb } = require('./db');
     const db = await getDb();
