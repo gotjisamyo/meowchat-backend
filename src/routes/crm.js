@@ -35,8 +35,9 @@ router.get('/list/:shopId', async (req, res) => {
   }
 
   if (search) {
+    const safeSearch = String(search).slice(0, 100);
     query += ' AND (name LIKE ? OR phone LIKE ? OR line_user_id LIKE ?)';
-    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    params.push(`%${safeSearch}%`, `%${safeSearch}%`, `%${safeSearch}%`);
   }
 
   query += ' ORDER BY created_at DESC';

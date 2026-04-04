@@ -6,6 +6,11 @@ const { requireOwnedShop } = require('../middleware/shopAccess');
 
 router.use(authMiddleware);
 
+function stripHtml(str) {
+  if (typeof str !== 'string') return str;
+  return str.replace(/<[^>]*>/g, '').trim();
+}
+
 // shop_id columns are now added in initDatabase() via ADD COLUMN IF NOT EXISTS
 
 async function requireMarketingShop(req, res) {
@@ -48,11 +53,16 @@ router.post('/campaigns', async (req, res) => {
     }
     if (!await requireOwnedShop(req, res, shopId)) return;
 
+    const ALLOWED_TYPES = ['auto', 'welcome', 'reminder', 'abandonment', 'review', 'promotion', 'reengage'];
+    const ALLOWED_TRIGGERS = ['signup', 'purchase', 'inactivity', 'trial_end', 'manual'];
+    const safeType = ALLOWED_TYPES.includes(type) ? type : 'auto';
+    const safeTrigger = ALLOWED_TRIGGERS.includes(trigger) ? trigger : 'signup';
+
     const db = getDb();
     const result = await db.run(`
       INSERT INTO marketing_campaigns (shop_id, name, type, trigger, steps, status)
       VALUES (?, ?, ?, ?, ?, 'active') RETURNING id
-    `, [req.shopId, name, type || 'auto', trigger || 'signup', JSON.stringify(steps || [])]);
+    `, [req.shopId, stripHtml(name), safeType, safeTrigger, JSON.stringify(steps || [])]);
 
     res.json({ success: true, id: result.lastInsertRowid });
   } catch (error) {
@@ -86,10 +96,13 @@ router.post('/apply-template', async (req, res) => {
       return res.status(404).json({ error: 'Customer not found' });
     }
 
+    const ALLOWED_CHANNELS = ['line', 'email', 'sms'];
+    const safeChannel = ALLOWED_CHANNELS.includes(channel) ? channel : 'line';
+
     const result = await db.run(`
       INSERT INTO marketing_automations (shop_id, customer_id, template_id, channel, status, next_send)
       VALUES (?, ?, ?, ?, 'active', NOW()) RETURNING id
-    `, [req.shopId, customerId, templateId, channel || 'line']);
+    `, [req.shopId, customerId, templateId, safeChannel]);
 
     res.json({ success: true, id: result.lastInsertRowid });
   } catch (error) {

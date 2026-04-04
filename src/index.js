@@ -587,6 +587,9 @@ app.post('/api/chat', authMiddleware, async (req, res) => {
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
+    if (String(message).length > 1000) {
+      return res.status(400).json({ error: 'message must be ≤ 1000 characters' });
+    }
     if (!shopId) {
       return res.status(400).json({ error: 'shopId is required' });
     }
