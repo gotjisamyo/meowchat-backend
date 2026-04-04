@@ -93,8 +93,13 @@ router.post('/stock-in', async (req, res) => {
   const db = getDb();
   const { shopId, productId, quantity, reference, notes, createdBy } = req.body;
 
-  if (!shopId || !productId || !quantity) {
+  const parsedQty = Number(quantity);
+  if (!shopId || !productId || !parsedQty) {
     return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  if (!Number.isInteger(parsedQty) || parsedQty <= 0) {
+    return res.status(400).json({ error: 'quantity must be a positive integer' });
   }
 
   if (!await requireOwnedShop(req, res, shopId)) {
@@ -115,19 +120,19 @@ router.post('/stock-in', async (req, res) => {
 
     if (inventory) {
       await db.run('UPDATE inventory SET quantity = quantity + ?, updated_at = ? WHERE id = ?',
-        [quantity, now, inventory.id]);
+        [parsedQty, now, inventory.id]);
     } else {
       const invId = `inv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       await db.run(`
         INSERT INTO inventory (id, shop_id, product_id, quantity, min_stock_level, status, created_at, updated_at)
         VALUES (?, ?, ?, ?, 10, 'active', ?, ?)
-      `, [invId, req.shopId, productId, quantity, now, now]);
+      `, [invId, req.shopId, productId, parsedQty, now, now]);
     }
 
     await db.run(`
       INSERT INTO stock_movements (id, inventory_id, product_id, shop_id, type, quantity, reference, notes, created_by, created_at)
       VALUES (?, (SELECT id FROM inventory WHERE shop_id = ? AND product_id = ?), ?, ?, 'in', ?, ?, ?, ?, ?)
-    `, [movementId, req.shopId, productId, productId, req.shopId, quantity, reference, notes, createdBy || String(req.userId), now]);
+    `, [movementId, req.shopId, productId, productId, req.shopId, parsedQty, reference, notes, createdBy || String(req.userId), now]);
 
     const updatedInv = await db.get('SELECT * FROM inventory WHERE shop_id = ? AND product_id = ?',
       [req.shopId, productId]);
@@ -154,8 +159,13 @@ router.post('/stock-out', async (req, res) => {
   const db = getDb();
   const { shopId, productId, quantity, reference, notes, createdBy } = req.body;
 
-  if (!shopId || !productId || !quantity) {
+  const parsedQtyOut = Number(quantity);
+  if (!shopId || !productId || !parsedQtyOut) {
     return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  if (!Number.isInteger(parsedQtyOut) || parsedQtyOut <= 0) {
+    return res.status(400).json({ error: 'quantity must be a positive integer' });
   }
 
   if (!await requireOwnedShop(req, res, shopId)) {
@@ -174,7 +184,7 @@ router.post('/stock-out', async (req, res) => {
     let inventory = await db.get('SELECT * FROM inventory WHERE shop_id = ? AND product_id = ?',
       [req.shopId, productId]);
 
-    if (!inventory || inventory.quantity < quantity) {
+    if (!inventory || inventory.quantity < parsedQtyOut) {
       return res.status(400).json({
         error: 'Insufficient stock',
         available: inventory ? inventory.quantity : 0
@@ -182,12 +192,12 @@ router.post('/stock-out', async (req, res) => {
     }
 
     await db.run('UPDATE inventory SET quantity = quantity - ?, updated_at = ? WHERE id = ?',
-      [quantity, now, inventory.id]);
+      [parsedQtyOut, now, inventory.id]);
 
     await db.run(`
       INSERT INTO stock_movements (id, inventory_id, product_id, shop_id, type, quantity, reference, notes, created_by, created_at)
       VALUES (?, (SELECT id FROM inventory WHERE shop_id = ? AND product_id = ?), ?, ?, 'out', ?, ?, ?, ?, ?)
-    `, [movementId, req.shopId, productId, productId, req.shopId, quantity, reference, notes, createdBy || String(req.userId), now]);
+    `, [movementId, req.shopId, productId, productId, req.shopId, parsedQtyOut, reference, notes, createdBy || String(req.userId), now]);
 
     const updatedInv = await db.get('SELECT * FROM inventory WHERE shop_id = ? AND product_id = ?',
       [req.shopId, productId]);

@@ -277,6 +277,12 @@ async function activateSubscriptionFromStripe({
 
   await ensureUsageTracking(shopId, endDateIso);
 
+  // Unlock bot on the shop when payment succeeds
+  await db.run(
+    `UPDATE shops SET bot_locked = FALSE, subscription_status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [shopId]
+  );
+
   return getSubscription(shopId);
 }
 

@@ -59,9 +59,13 @@ router.post('/', async (req, res) => {
 
   try {
     const orderItems = [];
+    let computedTotal = 0;
 
     for (const item of items) {
-      const { productId, quantity, price } = item;
+      const { productId, quantity } = item;
+      if (!Number.isInteger(quantity) || quantity <= 0) {
+        return res.status(400).json({ error: 'quantity must be a positive integer', productId });
+      }
       const product = await getOwnedProduct(db, req.userId, productId);
 
       if (!product || product.shop_id !== req.shopId) {
@@ -94,11 +98,14 @@ router.post('/', async (req, res) => {
         ) VALUES (?, ?, ?, ?, 'out', ?, ?, ?, 'customer_order', ?)
       `, [movId, inventory.id, productId, req.shopId, quantity, orderNumber, note, now]);
 
+      const itemPrice = Number(product.price) || 0;
+      computedTotal += itemPrice * quantity;
+
       orderItems.push({
         productId,
         productName: product.name || 'Unknown',
         quantity,
-        price
+        price: itemPrice
       });
 
       const updatedInv = await db.get(
@@ -126,7 +133,7 @@ router.post('/', async (req, res) => {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       orderId, req.shopId, customerId, orderNumber, 'completed',
-      JSON.stringify(orderItems), totalAmount, paymentMethod,
+      JSON.stringify(orderItems), computedTotal, paymentMethod,
       shippingAddress, note, now, now
     ]);
 
@@ -139,7 +146,7 @@ router.post('/', async (req, res) => {
           first_order_at = COALESCE(first_order_at, ?),
           updated_at = ?
         WHERE id = ? AND shop_id = ?
-      `, [totalAmount, now, now, now, customerId, req.shopId]);
+      `, [computedTotal, now, now, now, customerId, req.shopId]);
     }
 
     res.json({
@@ -147,7 +154,7 @@ router.post('/', async (req, res) => {
       orderId,
       orderNumber,
       items: orderItems,
-      totalAmount
+      totalAmount: computedTotal
     });
 
   } catch (error) {
@@ -224,6 +231,11 @@ router.put('/:shopId/:id/status', async (req, res) => {
 
   if (!await requireOwnedShop(req, res, shopId)) {
     return;
+  }
+
+  const ALLOWED_STATUSES = ['pending', 'confirmed', 'processing', 'shipped', 'completed', 'cancelled', 'refunded'];
+  if (!status || !ALLOWED_STATUSES.includes(status)) {
+    return res.status(400).json({ error: `status must be one of: ${ALLOWED_STATUSES.join(', ')}` });
   }
 
   const order = await getOwnedOrder(db, req.userId, id);

@@ -6,6 +6,11 @@ const { requireOwnedShop } = require('../middleware/shopAccess');
 
 router.use(authMiddleware);
 
+function stripHtml(str) {
+  if (typeof str !== 'string') return str;
+  return str.replace(/<[^>]*>/g, '').trim();
+}
+
 async function getOwnedProduct(db, userId, productId) {
   return db.get(`
     SELECT p.*
@@ -54,12 +59,12 @@ router.post('/', async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, 'active') RETURNING id
     `, [
       req.shopId,
-      name,
-      description || '',
+      stripHtml(name),
+      stripHtml(description || ''),
       price || 0,
       stock || 0,
-      imageUrl || '',
-      category || ''
+      stripHtml(imageUrl || ''),
+      stripHtml(category || '')
     ]);
 
     res.json({
@@ -88,12 +93,12 @@ router.put('/:id', async (req, res) => {
     const fields = [];
     const values = [];
 
-    if (name !== undefined) { fields.push('name = ?'); values.push(name); }
-    if (description !== undefined) { fields.push('description = ?'); values.push(description); }
+    if (name !== undefined) { fields.push('name = ?'); values.push(stripHtml(name)); }
+    if (description !== undefined) { fields.push('description = ?'); values.push(stripHtml(description)); }
     if (price !== undefined) { fields.push('price = ?'); values.push(price); }
     if (stock !== undefined) { fields.push('stock = ?'); values.push(stock); }
-    if (imageUrl !== undefined) { fields.push('"imageUrl" = ?'); values.push(imageUrl); }
-    if (category !== undefined) { fields.push('category = ?'); values.push(category); }
+    if (imageUrl !== undefined) { fields.push('"imageUrl" = ?'); values.push(stripHtml(imageUrl)); }
+    if (category !== undefined) { fields.push('category = ?'); values.push(stripHtml(category)); }
     if (status !== undefined) { fields.push('status = ?'); values.push(status); }
 
     if (fields.length === 0) {

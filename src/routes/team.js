@@ -5,6 +5,11 @@ const { getDb } = require('../db');
 const { authMiddleware } = require('../auth');
 const { requireOwnedShop } = require('../middleware/shopAccess');
 
+function stripHtml(str) {
+  if (typeof str !== 'string') return str;
+  return str.replace(/<[^>]*>/g, '').trim();
+}
+
 router.use(authMiddleware);
 
 async function getOwnedMember(db, userId, memberId) {
@@ -54,12 +59,17 @@ router.post('/', async (req, res) => {
       return;
     }
 
+    const safeName = stripHtml(name);
+    const safeRole = stripHtml(role || 'member');
+    const safeEmail = stripHtml(email || '');
+    const safePhone = stripHtml(phone || '');
+
     const result = await db.run(`
       INSERT INTO team_members (name, role, email, phone, shop_id, created_at)
       VALUES (?, ?, ?, ?, ?, NOW()) RETURNING id
-    `, [name, role || 'member', email || '', phone || '', req.shopId]);
+    `, [safeName, safeRole, safeEmail, safePhone, req.shopId]);
 
-    res.json({ id: result.lastInsertRowid, name, role: role || 'member', email, phone, shopId: req.shopId });
+    res.json({ id: result.lastInsertRowid, name: safeName, role: safeRole, email: safeEmail, phone: safePhone, shopId: req.shopId });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -80,7 +90,7 @@ router.put('/:id', async (req, res) => {
     await db.run(`
       UPDATE team_members SET name = ?, role = ?, email = ?, phone = ?, status = ?
       WHERE id = ? AND shop_id = ?
-    `, [name, role, email, phone, status, id, member.shop_id]);
+    `, [stripHtml(name), stripHtml(role), stripHtml(email), stripHtml(phone), stripHtml(status), id, member.shop_id]);
 
     res.json({ success: true });
   } catch (error) {

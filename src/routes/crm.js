@@ -268,13 +268,14 @@ async function getLineProfile(lineUserId, lineChannelAccessToken) {
 // Create or update customer from LINE
 router.post('/sync-line', async (req, res) => {
   const db = getDb();
-  const { shopId, lineUserId, lineChannelAccessToken } = req.body;
+  const { shopId, lineUserId } = req.body;
 
   if (!shopId || !lineUserId) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  if (!await requireOwnedShop(req, res, shopId)) {
+  const shop = await requireOwnedShop(req, res, shopId);
+  if (!shop) {
     return;
   }
 
@@ -289,8 +290,9 @@ router.post('/sync-line', async (req, res) => {
     }
 
     let lineProfile = null;
-    if (lineChannelAccessToken) {
-      lineProfile = await getLineProfile(lineUserId, lineChannelAccessToken);
+    // Use shop's own access token from DB — never trust client-supplied token
+    if (shop.line_access_token) {
+      lineProfile = await getLineProfile(lineUserId, shop.line_access_token);
     }
 
     const id = `cust_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
