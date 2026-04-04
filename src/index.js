@@ -610,18 +610,6 @@ app.post('/api/chat', authMiddleware, async (req, res) => {
   }
 });
 
-// TEMP: one-time admin password reset (protected by ENGINE_ADMIN_KEY, remove after use)
-app.post('/api/internal/reset-pw', async (req, res) => {
-  const { key, email, newPassword } = req.body || {};
-  if (!key || key !== process.env.ENGINE_ADMIN_KEY) return res.status(403).json({ error: 'forbidden' });
-  if (!email || !newPassword || newPassword.length < 8) return res.status(400).json({ error: 'bad params' });
-  const bcrypt = require('bcrypt');
-  const db = getDb();
-  const hash = await bcrypt.hash(newPassword, 10);
-  await db.run('UPDATE users SET password_hash = $1, failed_login_attempts = 0, login_locked_until = NULL WHERE email = $2', [hash, email]);
-  res.json({ ok: true, email });
-});
-
 // Start server — listen first, then init DB so healthcheck passes immediately
 const PORT = process.env.PORT || 3000;
 
