@@ -309,6 +309,86 @@ app.get('/api/bots/:botId/analytics/topics', authMiddleware, async (req, res) =>
   }
 });
 
+// Analytics Overview — daily breakdown + stats + keywords
+app.get('/api/bots/:botId/analytics/overview', authMiddleware, async (req, res) => {
+  try {
+    const db = getDb();
+    const { botId } = req.params;
+    const days = Math.min(parseInt(req.query.days || '30'), 90);
+
+    const daily = await db.all(
+      `SELECT
+         DATE(cv.created_at AT TIME ZONE 'Asia/Bangkok') as day,
+         COUNT(DISTINCT cv.id) as conversations,
+         COUNT(DISTINCT cv.line_user_id) as unique_users,
+         COUNT(CASE WHEN cv.escalated = TRUE THEN 1 END) as escalations
+       FROM conversations cv
+       WHERE cv.shop_id = ?
+         AND cv.created_at >= NOW() - INTERVAL '${days} days'
+       GROUP BY DATE(cv.created_at AT TIME ZONE 'Asia/Bangkok')
+       ORDER BY day ASC`,
+      [botId]
+    );
+
+    const stats = await db.get(
+      `SELECT
+         COUNT(DISTINCT cv.id) as total_conversations,
+         COUNT(cm.id) as total_messages,
+         COUNT(DISTINCT cv.line_user_id) as unique_users,
+         COUNT(CASE WHEN cv.escalated = TRUE THEN 1 END) as escalations
+       FROM conversations cv
+       LEFT JOIN conversation_messages cm ON cm.conversation_id = cv.id
+       WHERE cv.shop_id = ? AND cv.created_at >= NOW() - INTERVAL '${days} days'`,
+      [botId]
+    );
+
+    const messages = await db.all(
+      `SELECT cm.content FROM conversation_messages cm
+       JOIN conversations cv ON cv.id = cm.conversation_id
+       WHERE cv.shop_id = ? AND cm.role = 'user'
+         AND cm.created_at >= NOW() - INTERVAL '${days} days'
+       ORDER BY cm.created_at DESC LIMIT 1000`,
+      [botId]
+    );
+
+    const stopwords = new Set(['ครับ','ค่ะ','คะ','นะ','ๆ','และ','แล้ว','ก็','ได้','ไม่','มี','ที่','จะ','ว่า','ใน','ของ','กับ','หรือ','แต่','เป็น','ให้','มา','ไป','อยู่','อยาก','ต้อง','ขอ','เลย','ค่า','ราคา','นี้','นั้น','อัน']);
+    const freq = {};
+    for (const { content } of messages) {
+      const words = content.replace(/[^\u0E00-\u0E7Fa-zA-Z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 1 && !stopwords.has(w));
+      for (const w of words) freq[w] = (freq[w] || 0) + 1;
+    }
+    const topKeywords = Object.entries(freq)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20)
+      .map(([word, count]) => ({ word, count }));
+
+    const total = Number(stats?.total_conversations || 0);
+    const esc = Number(stats?.escalations || 0);
+
+    res.json({
+      days,
+      stats: {
+        totalConversations: total,
+        totalMessages: Number(stats?.total_messages || 0),
+        uniqueUsers: Number(stats?.unique_users || 0),
+        escalations: esc,
+        aiResponseRate: total > 0 ? Math.round(((total - esc) / total) * 100) : 100,
+        timeSavedHours: Math.round((total * 3) / 60),
+      },
+      daily: daily.map(d => ({
+        day: d.day,
+        conversations: Number(d.conversations),
+        uniqueUsers: Number(d.unique_users),
+        escalations: Number(d.escalations),
+      })),
+      topKeywords,
+    });
+  } catch (err) {
+    console.error('[analytics/overview] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 async function sendLineNotify(db, shopId, lineUserId, lastMessage) {
   const shop = await db.get('SELECT line_notify_token FROM shops WHERE id = ?', [shopId]);
   const token = shop?.line_notify_token;
