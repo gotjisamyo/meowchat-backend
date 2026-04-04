@@ -239,7 +239,12 @@ app.get('/api/bots/:botId/analytics/topics', authMiddleware, async (req, res) =>
     const { getDb } = require('./db');
     const db = await getDb();
     const { botId } = req.params;
-    const days = parseInt(req.query.days || '30');
+    const parsedDays = parseInt(req.query.days || '30');
+    const days = Number.isFinite(parsedDays) ? Math.min(Math.max(parsedDays, 1), 90) : 30;
+
+    // Verify ownership
+    const shop = await db.get('SELECT id FROM shops WHERE id = ? AND user_id = ?', [botId, req.userId]);
+    if (!shop) return res.status(403).json({ error: 'Forbidden' });
 
     // Get all user messages for this bot in the time range
     const messages = await db.all(
@@ -314,7 +319,12 @@ app.get('/api/bots/:botId/analytics/overview', authMiddleware, async (req, res) 
   try {
     const db = getDb();
     const { botId } = req.params;
-    const days = Math.min(parseInt(req.query.days || '30'), 90);
+    const parsedDays = parseInt(req.query.days || '30');
+    const days = Number.isFinite(parsedDays) ? Math.min(Math.max(parsedDays, 1), 90) : 30;
+
+    // Verify ownership
+    const shop = await db.get('SELECT id FROM shops WHERE id = ? AND user_id = ?', [botId, req.userId]);
+    if (!shop) return res.status(403).json({ error: 'Forbidden' });
 
     const daily = await db.all(
       `SELECT

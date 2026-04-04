@@ -103,6 +103,12 @@ router.post('/schedule', async (req, res) => {
     if (!shopId || !customerId || !message || !sendAt) {
       return res.status(400).json({ error: 'shopId, customerId, message and sendAt are required' });
     }
+    if (typeof message !== 'string' || message.length > 2000) {
+      return res.status(400).json({ error: 'message must be ≤ 2000 characters' });
+    }
+    if (Number.isNaN(new Date(sendAt).getTime())) {
+      return res.status(400).json({ error: 'sendAt is not a valid date' });
+    }
     if (!await requireOwnedShop(req, res, shopId)) return;
 
     const db = getDb();
@@ -148,6 +154,9 @@ router.post('/broadcast', async (req, res) => {
     const { shopId, message, filter } = req.body;
     if (!shopId || !message) {
       return res.status(400).json({ error: 'shopId and message are required' });
+    }
+    if (typeof message !== 'string' || message.length > 2000) {
+      return res.status(400).json({ error: 'message must be ≤ 2000 characters' });
     }
     if (!await requireOwnedShop(req, res, shopId)) return;
 

@@ -6,6 +6,11 @@ const { requireOwnedShop } = require('../middleware/shopAccess');
 
 router.use(authMiddleware);
 
+function stripHtml(str) {
+  if (typeof str !== 'string') return str;
+  return str.replace(/<[^>]*>/g, '').trim();
+}
+
 async function getOwnedProject(db, userId, projectId) {
   return db.get(`
     SELECT p.*
@@ -57,12 +62,15 @@ router.post('/', async (req, res) => {
 
     if (!await requireOwnedShop(req, res, shopId)) return;
 
+    const safeName = stripHtml(name);
+    const safeDesc = stripHtml(description || '');
+
     const result = await db.run(`
       INSERT INTO projects (name, description, status, shop_id, created_at)
       VALUES (?, ?, ?, ?, NOW()) RETURNING id
-    `, [name, description || '', status || 'active', req.shopId]);
+    `, [safeName, safeDesc, status || 'active', req.shopId]);
 
-    res.json({ id: result.lastInsertRowid, name, description, status: status || 'active', shopId: req.shopId });
+    res.json({ id: result.lastInsertRowid, name: safeName, description: safeDesc, status: status || 'active', shopId: req.shopId });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -85,7 +93,7 @@ router.put('/:id', async (req, res) => {
         status = COALESCE(?, status),
         updated_at = NOW()
       WHERE id = ? AND shop_id = ?
-    `, [name, description, status, req.params.id, project.shop_id]);
+    `, [name ? stripHtml(name) : null, description ? stripHtml(description) : null, status, req.params.id, project.shop_id]);
 
     res.json({ success: true });
   } catch (error) {
@@ -160,15 +168,18 @@ router.post('/tasks', async (req, res) => {
       return res.status(404).json({ error: 'Project not found' });
     }
 
+    const safeTitle = stripHtml(title);
+    const safeTaskDesc = stripHtml(description || '');
+
     const result = await db.run(`
       INSERT INTO project_tasks (title, description, priority, status, project_id, due_date, created_at)
       VALUES (?, ?, ?, ?, ?, ?, NOW()) RETURNING id
-    `, [title, description || '', priority || 'medium', status || 'todo', projectId, dueDate || null]);
+    `, [safeTitle, safeTaskDesc, priority || 'medium', status || 'todo', projectId, dueDate || null]);
 
     res.json({
       id: result.lastInsertRowid,
-      title,
-      description,
+      title: safeTitle,
+      description: safeTaskDesc,
       priority: priority || 'medium',
       status: status || 'todo',
       projectId
@@ -198,7 +209,7 @@ router.put('/tasks/:id', async (req, res) => {
         due_date = COALESCE(?, due_date),
         updated_at = NOW()
       WHERE id = ?
-    `, [title, description, priority, status, dueDate, req.params.id]);
+    `, [title ? stripHtml(title) : null, description ? stripHtml(description) : null, priority, status, dueDate, req.params.id]);
 
     res.json({ success: true });
   } catch (error) {
