@@ -547,61 +547,86 @@ ${productList}${kbList}
 
 // ── Knowledge Base CRUD ──────────────────────────────────────────────────────
 
-router.get('/:botId/knowledge', async (req, res) => {
+// Ownership guard: verify botId belongs to authenticated user
+async function requireShopOwner(req, res, next) {
   try {
     const db = await getDb();
-    const shop = await db.get('SELECT id FROM shops WHERE id = ? AND user_id = ?', [req.params.botId, req.user.id]);
-    const shopId = shop?.id || req.params.botId;
-    const rows = await db.all('SELECT * FROM bot_knowledge WHERE shop_id = ? ORDER BY "createdAt" ASC', [shopId]);
+    const shop = await db.get(
+      'SELECT id FROM shops WHERE id = ? AND user_id = ?',
+      [req.params.botId, req.userId]
+    );
+    if (!shop) return res.status(403).json({ error: 'Access denied' });
+    req.shopId = shop.id;
+    next();
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+router.get('/:botId/knowledge', requireShopOwner, async (req, res) => {
+  try {
+    const db = await getDb();
+    const rows = await db.all(
+      'SELECT * FROM bot_knowledge WHERE shop_id = ? ORDER BY "createdAt" ASC',
+      [req.shopId]
+    );
     res.json(rows.map(r => ({ ...r, keywords: JSON.parse(r.keywords || '[]') })));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
-router.post('/:botId/knowledge', async (req, res) => {
+router.post('/:botId/knowledge', requireShopOwner, async (req, res) => {
   try {
-    const db = await getDb();
     const { topic, content, keywords = [] } = req.body;
+    if (!topic || !topic.trim()) return res.status(400).json({ error: 'topic is required' });
+    if (!content || !content.trim()) return res.status(400).json({ error: 'content is required' });
+    if (content.length > 5000) return res.status(400).json({ error: 'content must be ≤ 5000 chars' });
+    const db = await getDb();
     const id = `kb_${Date.now()}`;
     await db.run(
       'INSERT INTO bot_knowledge (id, shop_id, topic, content, keywords) VALUES (?, ?, ?, ?, ?)',
-      [id, req.params.botId, topic, content, JSON.stringify(keywords)]
+      [id, req.shopId, topic.trim(), content.trim(), JSON.stringify(keywords)]
     );
-    const entry = { id, topic, content, keywords };
-    // Sync KB to engine (non-blocking)
-    syncKBToEngine(req.params.botId, db).catch(e => console.warn('[bots] KB sync failed:', e));
+    const entry = { id, topic: topic.trim(), content: content.trim(), keywords };
+    syncKBToEngine(req.shopId, db).catch(e => console.warn('[bots] KB sync failed:', e));
     res.json(entry);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
-router.put('/:botId/knowledge/:entryId', async (req, res) => {
+router.put('/:botId/knowledge/:entryId', requireShopOwner, async (req, res) => {
   try {
-    const db = await getDb();
     const { topic, content, keywords = [] } = req.body;
-    await db.run(
+    if (!topic || !topic.trim()) return res.status(400).json({ error: 'topic is required' });
+    if (!content || !content.trim()) return res.status(400).json({ error: 'content is required' });
+    if (content.length > 5000) return res.status(400).json({ error: 'content must be ≤ 5000 chars' });
+    const db = await getDb();
+    const result = await db.run(
       'UPDATE bot_knowledge SET topic = ?, content = ?, keywords = ?, "updatedAt" = CURRENT_TIMESTAMP WHERE id = ? AND shop_id = ?',
-      [topic, content, JSON.stringify(keywords), req.params.entryId, req.params.botId]
+      [topic.trim(), content.trim(), JSON.stringify(keywords), req.params.entryId, req.shopId]
     );
-    // Sync KB to engine (non-blocking)
-    syncKBToEngine(req.params.botId, db).catch(e => console.warn('[bots] KB sync failed:', e));
-    res.json({ id: req.params.entryId, topic, content, keywords });
+    if (result.changes === 0) return res.status(404).json({ error: 'Entry not found' });
+    syncKBToEngine(req.shopId, db).catch(e => console.warn('[bots] KB sync failed:', e));
+    res.json({ id: req.params.entryId, topic: topic.trim(), content: content.trim(), keywords });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
-router.delete('/:botId/knowledge/:entryId', async (req, res) => {
+router.delete('/:botId/knowledge/:entryId', requireShopOwner, async (req, res) => {
   try {
     const db = await getDb();
-    await db.run('DELETE FROM bot_knowledge WHERE id = ? AND shop_id = ?', [req.params.entryId, req.params.botId]);
-    // Sync KB to engine (non-blocking)
-    syncKBToEngine(req.params.botId, db).catch(e => console.warn('[bots] KB sync failed:', e));
+    const result = await db.run(
+      'DELETE FROM bot_knowledge WHERE id = ? AND shop_id = ?',
+      [req.params.entryId, req.shopId]
+    );
+    if (result.changes === 0) return res.status(404).json({ error: 'Entry not found' });
+    syncKBToEngine(req.shopId, db).catch(e => console.warn('[bots] KB sync failed:', e));
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
