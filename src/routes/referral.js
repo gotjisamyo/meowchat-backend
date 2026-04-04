@@ -1,8 +1,18 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const { getDb } = require('../db');
 const { authMiddleware } = require('../auth');
 
 const router = express.Router();
+
+// 10 clicks per IP per hour — prevents click inflation
+const clickLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests' },
+});
 
 // Generate unique referral code for a shop
 function generateCode(shopId) {
@@ -48,7 +58,7 @@ router.get('/my', authMiddleware, async (req, res) => {
 });
 
 // POST /api/referral/click — track click (called from onboarding page load)
-router.post('/click', async (req, res) => {
+router.post('/click', clickLimiter, async (req, res) => {
   try {
     const { code } = req.body;
     if (!code) return res.status(400).json({ error: 'code required' });
@@ -102,9 +112,14 @@ router.post('/convert', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /api/referral/reward — called when referred shop upgrades to paid
+// POST /api/referral/reward — called internally when referred shop upgrades to paid
 // Extends referrer's subscription by 30 days
 router.post('/reward', async (req, res) => {
+  // Internal-only: require INTERNAL_API_KEY header
+  const key = req.headers['x-internal-key'];
+  if (!key || key !== process.env.INTERNAL_API_KEY) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
   try {
     const { referred_shop_id } = req.body;
     if (!referred_shop_id) return res.status(400).json({ error: 'referred_shop_id required' });

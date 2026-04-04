@@ -799,6 +799,7 @@ router.post('/:botId/broadcast', async (req, res) => {
 
     const { message } = req.body;
     if (!message?.trim()) return res.status(400).json({ error: 'message required' });
+    if (message.length > 2000) return res.status(400).json({ error: 'message must be ≤ 2000 chars (LINE limit)' });
 
     // Get all distinct LINE user IDs for this shop
     const users = await db.all(

@@ -147,10 +147,14 @@ async function processEvent(event, shop, products, knowledgeBase) {
   if (escalated) {
     reply = `ขอโทษที่ทำให้ไม่สะดวกนะคะ ทางร้านจะให้ทีมงานติดต่อกลับโดยเร็วที่สุดนะคะ ขอบคุณที่รอค่ะ 🙏`;
 
-    // Task 4: Notify merchant via LINE push
-    if (shop.line_channel_id && shop.line_access_token) {
-      const notifyText = `🔔 ลูกค้าต้องการความช่วยเหลือ!\n\nข้อความ: "${userText}"\n\nกรุณาตอบกลับลูกค้าโดยเร็วนะครับ`;
-      await pushToLine(shop.line_channel_id, notifyText, shop.line_access_token);
+    // Notify merchant via LINE Notify (line_notify_token = merchant's token, not channel ID)
+    if (shop.line_notify_token) {
+      const notifyText = `\n🔔 ลูกค้าต้องการความช่วยเหลือ!\nข้อความ: "${userText}"\n\nตอบกลับที่ my.meowchat.store/handoff`;
+      fetch('https://notify-api.line.me/api/notify', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ message: notifyText }),
+      }).catch(e => console.warn('[LINE] notify failed:', e.message));
     }
     console.log(`[LINE] escalation detected shopId=${shop.id} userId=${userId}`);
   } else if (process.env.GEMINI_API_KEY) {
@@ -196,7 +200,8 @@ router.post('/:shopId', async (req, res) => {
   // Load shop
   const db = getDb();
   const shop = await db.get(
-    `SELECT id, name, description, line_access_token, line_channel_secret, line_channel_id
+    `SELECT id, name, description, line_access_token, line_channel_secret, line_channel_id,
+            line_notify_token, bot_locked, subscription_status
      FROM shops WHERE id = ?`,
     [shopId]
   ).catch(() => null);
@@ -213,6 +218,12 @@ router.post('/:shopId', async (req, res) => {
 
   // Respond to LINE immediately (must be < 1s)
   res.json({ ok: true });
+
+  // Skip processing if bot is locked (expired subscription)
+  if (shop.bot_locked) {
+    console.log(`[LINE] bot locked — skipping shopId=${shopId}`);
+    return;
+  }
 
   // Load context async (after responding to LINE)
   const [products, knowledgeBase] = await Promise.all([
