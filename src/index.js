@@ -12,6 +12,9 @@ const { requireOwnedShop } = require('./middleware/shopAccess');
 
 const app = express();
 
+// Trust Railway/proxy reverse proxy so rate-limiter sees real client IPs
+app.set("trust proxy", 1);
+
 // Security headers
 app.use(helmet());
 
