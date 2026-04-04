@@ -372,7 +372,15 @@ router.get('/:botId/conversations', async (req, res) => {
 // GET /api/bots/:botId/conversations/:convId/messages — message thread
 router.get('/:botId/conversations/:convId/messages', async (req, res) => {
   try {
-    const db = await getDb();
+    const db = getDb();
+    // Verify the conversation belongs to this bot AND the bot belongs to this user
+    const conv = await db.get(
+      `SELECT cv.id FROM conversations cv
+       JOIN shops s ON s.id = cv.shop_id
+       WHERE cv.id = ? AND cv.shop_id = ? AND s.user_id = ?`,
+      [req.params.convId, req.params.botId, req.userId]
+    );
+    if (!conv) return res.status(403).json({ error: 'Access denied' });
     const messages = await db.all(
       `SELECT id, role, content, created_at FROM conversation_messages
        WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 200`,
@@ -393,7 +401,7 @@ router.post('/:botId/handoff', async (req, res) => {
 
     // Verify ownership
     const shop = await db.get(
-      'SELECT id, name, line_access_token, line_channel_id FROM shops WHERE id = ? AND user_id = ?',
+      'SELECT id, name, line_access_token, line_channel_id, line_notify_token FROM shops WHERE id = ? AND user_id = ?',
       [botId, req.userId]
     );
 
@@ -408,10 +416,14 @@ router.post('/:botId/handoff', async (req, res) => {
       VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `, [handoffId, botId, lineUserId || null, customerName || 'ลูกค้า', message || '']);
 
-    // Send LINE push notification to bot owner if line_access_token + line_channel_id available
-    if (shop.line_access_token && shop.line_channel_id) {
-      const notifyMsg = `🔔 แจ้งเตือน: มีลูกค้าต้องการคุยกับคุณ!\n\nชื่อ: ${customerName || 'ลูกค้า'}\nร้าน: ${shop.name}\n${message ? `ข้อความ: ${message}` : ''}\n\nกรุณาตอบกลับลูกค้าโดยเร็ว`;
-      await sendLinePushMessage(shop.line_access_token, shop.line_channel_id, notifyMsg);
+    // Notify merchant via LINE Notify (correct — uses notify token, not channel ID)
+    if (shop.line_notify_token) {
+      const notifyMsg = `\n🔔 มีลูกค้าต้องการคุยกับคุณ!\nชื่อ: ${customerName || 'ลูกค้า'}\nร้าน: ${shop.name}${message ? `\nข้อความ: ${message}` : ''}\n\nกรุณาตอบกลับที่ my.meowchat.store/handoff`;
+      fetch('https://notify-api.line.me/api/notify', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ message: notifyMsg }),
+      }).catch(e => console.warn('[handoff] LINE Notify failed:', e.message));
     }
 
     res.json({
@@ -626,12 +638,14 @@ router.post('/:botId/knowledge', requireShopOwner, async (req, res) => {
     if (!content || !content.trim()) return res.status(400).json({ error: 'content is required' });
     if (content.length > 5000) return res.status(400).json({ error: 'content must be ≤ 5000 chars' });
     const db = await getDb();
-    const id = `kb_${Date.now()}`;
+    const safeTopic = stripHtml(topic.trim());
+    const safeContent = stripHtml(content.trim());
+    const id = `kb_${crypto.randomBytes(8).toString('hex')}`;
     await db.run(
       'INSERT INTO bot_knowledge (id, shop_id, topic, content, keywords) VALUES (?, ?, ?, ?, ?)',
-      [id, req.shopId, topic.trim(), content.trim(), JSON.stringify(keywords)]
+      [id, req.shopId, safeTopic, safeContent, JSON.stringify(keywords)]
     );
-    const entry = { id, topic: topic.trim(), content: content.trim(), keywords };
+    const entry = { id, topic: safeTopic, content: safeContent, keywords };
     syncKBToEngine(req.shopId, db).catch(e => console.warn('[bots] KB sync failed:', e));
     res.json(entry);
   } catch (err) {
@@ -646,13 +660,15 @@ router.put('/:botId/knowledge/:entryId', requireShopOwner, async (req, res) => {
     if (!content || !content.trim()) return res.status(400).json({ error: 'content is required' });
     if (content.length > 5000) return res.status(400).json({ error: 'content must be ≤ 5000 chars' });
     const db = await getDb();
+    const safeTopic = stripHtml(topic.trim());
+    const safeContent = stripHtml(content.trim());
     const result = await db.run(
       'UPDATE bot_knowledge SET topic = ?, content = ?, keywords = ?, "updatedAt" = CURRENT_TIMESTAMP WHERE id = ? AND shop_id = ?',
-      [topic.trim(), content.trim(), JSON.stringify(keywords), req.params.entryId, req.shopId]
+      [safeTopic, safeContent, JSON.stringify(keywords), req.params.entryId, req.shopId]
     );
     if (result.changes === 0) return res.status(404).json({ error: 'Entry not found' });
     syncKBToEngine(req.shopId, db).catch(e => console.warn('[bots] KB sync failed:', e));
-    res.json({ id: req.params.entryId, topic: topic.trim(), content: content.trim(), keywords });
+    res.json({ id: req.params.entryId, topic: safeTopic, content: safeContent, keywords });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -812,12 +828,16 @@ router.post('/:botId/broadcast', async (req, res) => {
     for (let i = 0; i < userIds.length; i += BATCH) {
       const batch = userIds.slice(i, i + BATCH);
       try {
-        await fetch('https://api.line.me/v2/bot/message/multicast', {
+        const resp = await fetch('https://api.line.me/v2/bot/message/multicast', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
           body: JSON.stringify({ to: batch, messages: [{ type: 'text', text: message.trim() }] }),
         });
-        sentCount += batch.length;
+        if (resp.ok) {
+          sentCount += batch.length;
+        } else {
+          console.error(`[broadcast] LINE API error ${resp.status} for batch at index ${i}`);
+        }
       } catch (e) {
         console.error('[broadcast] multicast batch error:', e.message);
       }

@@ -192,11 +192,16 @@ router.put('/profile', authMiddleware, async (req, res) => {
     const { name, password } = req.body;
     const db = getDb();
 
+    const safeName = name ? name.replace(/<[^>]*>/g, '').trim() : null;
+
     if (password) {
+      if (password.length < 8) {
+        return res.status(400).json({ error: 'Password too short', message: 'รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร' });
+      }
       const passwordHash = await bcrypt.hash(password, 10);
-      await db.run('UPDATE users SET name = ?, password_hash = ? WHERE id = ?', [name, passwordHash, req.userId]);
-    } else if (name) {
-      await db.run('UPDATE users SET name = ? WHERE id = ?', [name, req.userId]);
+      await db.run('UPDATE users SET name = COALESCE(?, name), password_hash = ? WHERE id = ?', [safeName, passwordHash, req.userId]);
+    } else if (safeName) {
+      await db.run('UPDATE users SET name = ? WHERE id = ?', [safeName, req.userId]);
     }
 
     const user = await db.get('SELECT id, email, name, role, created_at FROM users WHERE id = ?', [req.userId]);
