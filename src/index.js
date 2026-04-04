@@ -31,8 +31,8 @@ const allowedOrigins = [
 app.use(cors({
   origin: process.env.NODE_ENV === 'production'
     ? (origin, cb) => {
-        // allow requests with no origin (mobile apps, curl) or matching origins
-        if (!origin || allowedOrigins.some(o => origin.startsWith(o))) {
+        // allow requests with no origin (mobile apps, curl) or exact-matching origins
+        if (!origin || allowedOrigins.includes(origin)) {
           cb(null, true);
         } else {
           cb(new Error(`CORS blocked: ${origin}`));

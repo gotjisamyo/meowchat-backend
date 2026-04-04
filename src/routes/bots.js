@@ -297,6 +297,18 @@ router.put('/:id', async (req, res) => {
     const { line_notify_token, line_access_token, line_channel_secret, slip_verify_mode } = req.body;
     const allowedSlipModes = ['off', 'auto', 'manual'];
     const slipMode = slip_verify_mode && allowedSlipModes.includes(slip_verify_mode) ? slip_verify_mode : null;
+
+    // Guard token field lengths (LINE tokens are ~172 chars; cap at 512 to prevent DB abuse)
+    const MAX_TOKEN_LEN = 512;
+    if (line_notify_token && String(line_notify_token).length > MAX_TOKEN_LEN) {
+      return res.status(400).json({ error: 'line_notify_token too long' });
+    }
+    if (line_access_token && String(line_access_token).length > MAX_TOKEN_LEN) {
+      return res.status(400).json({ error: 'line_access_token too long' });
+    }
+    if (line_channel_secret && String(line_channel_secret).length > MAX_TOKEN_LEN) {
+      return res.status(400).json({ error: 'line_channel_secret too long' });
+    }
     await db.run(`
       UPDATE shops
       SET name = COALESCE(?, name),
