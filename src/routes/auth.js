@@ -15,14 +15,9 @@ const registerLimiter = rateLimit({
   message: { error: 'Too many attempts', message: 'ลองใหม่อีกครั้งใน 15 นาที' },
 });
 
-// Login: stricter — 5 attempts per 15 minutes per IP
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many login attempts', message: 'ลองเข้าสู่ระบบใหม่อีกครั้งใน 15 นาที' },
-});
+// Login lockout constants — per email in DB (works across Railway instances)
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCK_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
 router.post('/register', registerLimiter, async (req, res) => {
   try {
@@ -87,7 +82,7 @@ router.post('/register', registerLimiter, async (req, res) => {
   }
 });
 
-router.post('/login', loginLimiter, async (req, res) => {
+router.post('/login', registerLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -101,19 +96,53 @@ router.post('/login', loginLimiter, async (req, res) => {
     const db = getDb();
     const user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
     if (!user) {
+      // Don't reveal whether email exists
       return res.status(401).json({
         error: 'Invalid credentials',
         message: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง'
       });
     }
 
+    // Check if account is locked
+    if (user.login_locked_until && new Date(user.login_locked_until) > new Date()) {
+      const retryAfterMs = new Date(user.login_locked_until) - Date.now();
+      const retryMinutes = Math.ceil(retryAfterMs / 60000);
+      return res.status(429).json({
+        error: 'Account locked',
+        message: `บัญชีถูกล็อกชั่วคราว กรุณาลองใหม่ใน ${retryMinutes} นาที`
+      });
+    }
+
     const isValid = await bcrypt.compare(password, user.password_hash);
     if (!isValid) {
+      // Increment failed attempts
+      const attempts = (user.failed_login_attempts || 0) + 1;
+      if (attempts >= LOGIN_MAX_ATTEMPTS) {
+        const lockedUntil = new Date(Date.now() + LOGIN_LOCK_DURATION_MS).toISOString();
+        await db.run(
+          'UPDATE users SET failed_login_attempts = ?, login_locked_until = ? WHERE id = ?',
+          [attempts, lockedUntil, user.id]
+        );
+        return res.status(429).json({
+          error: 'Account locked',
+          message: 'ป้อนรหัสผ่านผิดหลายครั้ง บัญชีถูกล็อก 15 นาที'
+        });
+      }
+      await db.run(
+        'UPDATE users SET failed_login_attempts = ? WHERE id = ?',
+        [attempts, user.id]
+      );
       return res.status(401).json({
         error: 'Invalid credentials',
         message: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง'
       });
     }
+
+    // Success — reset lockout counters
+    await db.run(
+      'UPDATE users SET failed_login_attempts = 0, login_locked_until = NULL WHERE id = ?',
+      [user.id]
+    );
 
     const token = generateToken(user.id, user.role || 'user');
 

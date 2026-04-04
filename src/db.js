@@ -84,6 +84,8 @@ async function initDatabase() {
   `);
 
   await db.exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user'`);
+  await db.exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER DEFAULT 0`);
+  await db.exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS login_locked_until TIMESTAMP`);
 
   // Create shops table (multi-tenant)
   await db.exec(`
