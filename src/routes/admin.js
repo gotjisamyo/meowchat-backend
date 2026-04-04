@@ -195,6 +195,36 @@ router.post('/payments/:id/approve', async (req, res) => {
       WHERE id = ?
     `, [req.params.id]);
 
+    // Unlock bot and activate subscription for the shop
+    if (payment.shop_id) {
+      const paidUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      await db.run(
+        `UPDATE shops
+         SET bot_locked = FALSE, subscription_status = 'active', updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [payment.shop_id]
+      );
+      // Upsert active subscription record
+      const existingSub = await db.get(
+        `SELECT id FROM subscriptions WHERE shop_id = ? AND status = 'active' LIMIT 1`,
+        [payment.shop_id]
+      );
+      if (existingSub) {
+        await db.run(
+          `UPDATE subscriptions SET payment_status = 'completed', end_date = ?, "updatedAt" = CURRENT_TIMESTAMP WHERE id = ?`,
+          [paidUntil, existingSub.id]
+        );
+      } else {
+        await db.run(
+          `INSERT INTO subscriptions (shop_id, plan_id, status, payment_method, payment_status, end_date)
+           VALUES (?, 2, 'active', 'bank_transfer', 'completed', ?)
+           ON CONFLICT DO NOTHING`,
+          [payment.shop_id, paidUntil]
+        );
+      }
+      console.log(`[admin] approved payment id=${req.params.id} → unlocked shop=${payment.shop_id}`);
+    }
+
     const updatedPayment = await db.get('SELECT * FROM payment_notifications WHERE id = ?', [req.params.id]);
 
     res.json({ message: 'อนุมัติการแจ้งโอนเรียบร้อยแล้ว', payment: updatedPayment });
@@ -230,7 +260,8 @@ router.post('/shops/:shopId/extend-trial', async (req, res) => {
   try {
     const db = getDb();
     const { shopId } = req.params;
-    const days = parseInt(req.body.days) || 7;
+    const rawDays = parseInt(req.body.days) || 7;
+    const days = Math.min(Math.max(rawDays, 1), 365); // cap 1–365 days
 
     const shop = await db.get('SELECT * FROM shops WHERE id = ?', [shopId]);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
@@ -239,7 +270,11 @@ router.post('/shops/:shopId/extend-trial', async (req, res) => {
     const newEndsAt = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
 
     await db.run(
-      `UPDATE shops SET trial_ends_at = ?, trial_reminder_sent = FALSE WHERE id = ?`,
+      `UPDATE shops
+       SET trial_ends_at = ?, trial_reminder_sent = FALSE,
+           bot_locked = FALSE, subscription_status = 'trial',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
       [newEndsAt.toISOString(), shopId]
     );
 

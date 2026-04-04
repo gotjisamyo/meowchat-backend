@@ -1,5 +1,6 @@
 const express = require('express');
 const { getDb } = require('../db');
+const { authMiddleware } = require('../auth');
 
 const router = express.Router();
 
@@ -122,7 +123,7 @@ router.get('/info', (req, res) => {
   });
 });
 
-router.post('/notify', async (req, res) => {
+router.post('/notify', authMiddleware, async (req, res) => {
   try {
     const {
       shopId,
@@ -158,14 +159,14 @@ router.post('/notify', async (req, res) => {
     }
 
     const db = getDb();
-    const shop = await db.get('SELECT id FROM shops WHERE id = ?', [String(shopId).trim()]);
+    const shop = await db.get('SELECT id FROM shops WHERE id = ? AND user_id = ?', [String(shopId).trim(), req.userId]);
     if (!shop) {
       return res.status(404).json({ success: false, error: 'shopId is invalid' });
     }
 
     const normalizedShopId = String(shopId).trim();
     const normalizedTransferDate = new Date(transferDate).toISOString();
-    const normalizedPayerName = String(payerName).trim();
+    const normalizedPayerName = String(payerName).replace(/<[^>]*>/g, '').trim();
 
     const result = await db.run(`
       INSERT INTO payment_notifications (
