@@ -308,8 +308,8 @@ router.put('/:id', async (req, res) => {
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
     `, [
-      name || null,
-      description || personality || null,
+      name ? stripHtml(name) : null,
+      (description || personality) ? stripHtml(description || personality) : null,
       line_notify_token !== undefined ? line_notify_token : null,
       line_access_token || null,
       line_channel_secret || null,
@@ -411,10 +411,12 @@ router.post('/:botId/handoff', async (req, res) => {
 
     // Create handoff record
     const handoffId = crypto.randomBytes(8).toString('hex');
+    const safeCustomerName = stripHtml(String(customerName || 'ลูกค้า')).slice(0, 200);
+    const safeMessage = stripHtml(String(message || '')).slice(0, 1000);
     await db.run(`
       INSERT INTO handoffs (id, shop_id, line_user_id, customer_name, message, status, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `, [handoffId, botId, lineUserId || null, customerName || 'ลูกค้า', message || '']);
+    `, [handoffId, botId, lineUserId || null, safeCustomerName, safeMessage]);
 
     // Notify merchant via LINE Notify (correct — uses notify token, not channel ID)
     if (shop.line_notify_token) {
@@ -508,6 +510,9 @@ router.post('/:botId/simulate', async (req, res) => {
 
     if (!message) {
       return res.status(400).json({ error: 'message is required' });
+    }
+    if (message.length > 500) {
+      return res.status(400).json({ error: 'message must be ≤ 500 characters for simulation' });
     }
 
     // Verify ownership

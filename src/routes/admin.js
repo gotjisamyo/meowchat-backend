@@ -189,6 +189,10 @@ router.post('/payments/:id/approve', async (req, res) => {
       return res.status(404).json({ error: 'Payment not found', message: 'ไม่พบรายการแจ้งโอน' });
     }
 
+    if (payment.status !== 'pending') {
+      return res.status(409).json({ error: 'Payment already processed', message: `รายการนี้ถูกดำเนินการแล้ว (${payment.status})` });
+    }
+
     await db.run(`
       UPDATE payment_notifications
       SET status = 'approved', updated_at = CURRENT_TIMESTAMP
@@ -293,6 +297,10 @@ router.post('/payments/:id/reject', async (req, res) => {
 
     if (!payment) {
       return res.status(404).json({ error: 'Payment not found', message: 'ไม่พบรายการแจ้งโอน' });
+    }
+
+    if (payment.status !== 'pending') {
+      return res.status(409).json({ error: 'Payment already processed', message: `รายการนี้ถูกดำเนินการแล้ว (${payment.status})` });
     }
 
     await db.run(`
@@ -407,6 +415,11 @@ router.get('/analytics/platform', async (_req, res) => {
 router.post('/credits/:id/approve', async (req, res) => {
   try {
     const db = getDb();
+    const credit = await db.get('SELECT * FROM merchant_credits WHERE id = ?', [req.params.id]);
+    if (!credit) return res.status(404).json({ error: 'Credit record not found' });
+    if (credit.status !== 'pending') {
+      return res.status(409).json({ error: 'Credit already processed', message: `สถานะปัจจุบัน: ${credit.status}` });
+    }
     await db.run(
       `UPDATE merchant_credits SET status = 'approved' WHERE id = ?`,
       [req.params.id]
