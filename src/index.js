@@ -611,7 +611,7 @@ app.post('/api/chat', authMiddleware, async (req, res) => {
 });
 
 // TEMP: one-time admin password reset (protected by ENGINE_ADMIN_KEY, remove after use)
-app.post('/api/admin/reset-pw', async (req, res) => {
+app.post('/api/internal/reset-pw', async (req, res) => {
   const { key, email, newPassword } = req.body || {};
   if (!key || key !== process.env.ENGINE_ADMIN_KEY) return res.status(403).json({ error: 'forbidden' });
   if (!email || !newPassword || newPassword.length < 8) return res.status(400).json({ error: 'bad params' });
