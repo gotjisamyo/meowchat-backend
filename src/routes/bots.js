@@ -7,6 +7,13 @@ const axios = require('axios');
 
 const router = express.Router();
 
+// Strip HTML tags to prevent XSS from being stored in the DB
+function stripHtml(str) {
+  if (typeof str !== 'string') return str;
+  return str.replace(/<[^>]*>/g, '').trim();
+}
+
+
 // Helper: send LINE push message
 async function sendLinePushMessage(accessToken, userId, message) {
   try {
@@ -45,6 +52,7 @@ router.post('/setup', async (req, res) => {
       openHours,
       botName,
       botStyle,
+      lineChannelId,
       lineChannelToken,
       lineChannelSecret
     } = req.body;
@@ -53,8 +61,26 @@ router.post('/setup', async (req, res) => {
       return res.status(400).json({ error: 'shopName is required' });
     }
 
+    const safeShopName = stripHtml(shopName);
+    const safeBotName = botName ? stripHtml(botName) : null;
+
     const db = getDb();
     const shopId = generateId();
+
+    // Trial abuse: if a LINE Channel ID is provided, ensure it hasn't claimed a trial before
+    if (lineChannelId && lineChannelId.trim()) {
+      const existingTrial = await db.get(
+        'SELECT line_channel_id, shop_id FROM line_channel_trials WHERE line_channel_id = ?',
+        [lineChannelId.trim()]
+      );
+      if (existingTrial) {
+        return res.status(409).json({
+          error: 'Trial already used',
+          message: 'LINE OA นี้เคยใช้สิทธิ์ทดลองฟรีแล้ว กรุณาเลือกแผนที่เหมาะสม',
+          redirect: '/pricing'
+        });
+      }
+    }
 
     // Check if user already has a shop (update) or create new one
     const existing = await db.get(
@@ -68,13 +94,15 @@ router.post('/setup', async (req, res) => {
         UPDATE shops
         SET name = ?,
             description = ?,
+            line_channel_id = COALESCE(?, line_channel_id),
             line_access_token = COALESCE(?, line_access_token),
             line_channel_secret = COALESCE(?, line_channel_secret),
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ? AND user_id = ?
       `, [
-        botName || shopName,
-        JSON.stringify({ businessType, shopName, phone, openHours, botStyle }),
+        safeBotName || safeShopName,
+        JSON.stringify({ businessType, shopName: safeShopName, phone, openHours, botStyle }),
+        lineChannelId ? lineChannelId.trim() : null,
         lineChannelToken || null,
         lineChannelSecret || null,
         existing.id,
@@ -93,17 +121,32 @@ router.post('/setup', async (req, res) => {
     // Create new shop record
     const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
     await db.run(`
-      INSERT INTO shops (id, user_id, name, description, line_access_token, line_channel_secret, plan, trial_ends_at, subscription_status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'trial', ?, 'trial', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      INSERT INTO shops (id, user_id, name, description, line_channel_id, line_access_token, line_channel_secret, plan, trial_ends_at, subscription_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'trial', ?, 'trial', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `, [
       shopId,
       req.userId,
-      botName || shopName,
-      JSON.stringify({ businessType, shopName, phone, openHours, botStyle }),
+      safeBotName || safeShopName,
+      JSON.stringify({ businessType, shopName: safeShopName, phone, openHours, botStyle }),
+      lineChannelId ? lineChannelId.trim() : '',
       lineChannelToken || '',
       lineChannelSecret || '',
       trialEndsAt
     ]);
+
+    // Record LINE Channel ID as trial-used to prevent abuse
+    if (lineChannelId && lineChannelId.trim()) {
+      try {
+        await db.run(
+          `INSERT INTO line_channel_trials (line_channel_id, shop_id, user_id)
+           VALUES (?, ?, ?)
+           ON CONFLICT (line_channel_id) DO NOTHING`,
+          [lineChannelId.trim(), shopId, req.userId]
+        );
+      } catch (trialErr) {
+        console.error('Record trial error (non-fatal):', trialErr.message);
+      }
+    }
 
     // Create trial subscription record
     try {

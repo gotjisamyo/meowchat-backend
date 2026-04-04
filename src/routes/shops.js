@@ -4,6 +4,13 @@ const { authMiddleware } = require('../auth');
 
 const router = express.Router();
 
+// Strip HTML tags to prevent XSS from being stored in the DB
+function stripHtml(str) {
+  if (typeof str !== 'string') return str;
+  return str.replace(/<[^>]*>/g, '').trim();
+}
+
+
 // Get all shops for current user
 router.get('/', authMiddleware, async (req, res) => {
   try {
@@ -32,7 +39,10 @@ router.post('/', authMiddleware, async (req, res) => {
   try {
     const { name, description, lineChannelId, lineChannelSecret, lineAccessToken } = req.body;
 
-    if (!name) {
+    const safeName = stripHtml(name);
+    const safeDescription = stripHtml(description);
+
+    if (!safeName) {
       return res.status(400).json({
         error: 'Missing name',
         message: 'กรุณากรอกชื่อร้าน'
@@ -40,6 +50,22 @@ router.post('/', authMiddleware, async (req, res) => {
     }
 
     const db = getDb();
+
+    // Trial limit: max 1 shop per user on trial plan
+    const existingShops = await db.all('SELECT id FROM shops WHERE user_id = ?', [req.userId]);
+    if (existingShops.length >= 1) {
+      const userSub = await db.get(
+        "SELECT status FROM subscriptions WHERE shop_id = ? AND status IN ('trial','active')",
+        [existingShops[0].id]
+      );
+      if (!userSub || userSub.status === 'trial') {
+        return res.status(403).json({
+          error: 'Trial limit reached',
+          message: 'แผนทดลองสร้างได้สูงสุด 1 ร้าน กรุณาอัปเกรดแผน',
+          redirect: '/pricing'
+        });
+      }
+    }
 
     // Generate shop ID
     const shopId = 'shop_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
@@ -68,8 +94,8 @@ router.post('/', authMiddleware, async (req, res) => {
     `, [
       shopId,
       req.userId,
-      name,
-      description || '',
+      safeName,
+      safeDescription || '',
       lineChannelId || '',
       lineChannelSecret || '',
       lineAccessToken || ''
@@ -185,8 +211,8 @@ router.put('/:id', authMiddleware, async (req, res) => {
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
     `, [
-      name,
-      description,
+      name ? stripHtml(name) : null,
+      description ? stripHtml(description) : null,
       lineChannelId,
       lineChannelSecret,
       lineAccessToken,

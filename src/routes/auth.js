@@ -6,8 +6,8 @@ const { generateToken, authMiddleware } = require('../auth');
 
 const router = express.Router();
 
-// Max 10 attempts per 15 minutes per IP
-const authLimiter = rateLimit({
+// Register: 10 attempts per 15 minutes per IP
+const registerLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   standardHeaders: true,
@@ -15,7 +15,16 @@ const authLimiter = rateLimit({
   message: { error: 'Too many attempts', message: 'ลองใหม่อีกครั้งใน 15 นาที' },
 });
 
-router.post('/register', authLimiter, async (req, res) => {
+// Login: stricter — 5 attempts per 15 minutes per IP
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts', message: 'ลองเข้าสู่ระบบใหม่อีกครั้งใน 15 นาที' },
+});
+
+router.post('/register', registerLimiter, async (req, res) => {
   try {
     const { email, password, name } = req.body;
 
@@ -78,7 +87,7 @@ router.post('/register', authLimiter, async (req, res) => {
   }
 });
 
-router.post('/login', authLimiter, async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 
