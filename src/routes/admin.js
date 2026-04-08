@@ -524,6 +524,70 @@ router.get('/subscriptions', async (req, res) => {
   }
 });
 
+// GET /api/admin/endpoint-stats — endpoint performance metrics with mock fallback
+router.get('/endpoint-stats', async (req, res) => {
+  const { range = '7d' } = req.query;
+
+  // Mock data — replace with real metrics when instrumentation is ready
+  const mockEndpoints = [
+    { path: '/api/auth/login',            method: 'POST', avg_latency: 142,  p99_latency: 380,  error_rate: 0.5,  req_count: 4820,  status: 'Fast' },
+    { path: '/api/admin/stats',           method: 'GET',  avg_latency: 87,   p99_latency: 210,  error_rate: 0.0,  req_count: 1230,  status: 'Fast' },
+    { path: '/api/dashboard',             method: 'GET',  avg_latency: 563,  p99_latency: 1120, error_rate: 1.2,  req_count: 9410,  status: 'OK'   },
+    { path: '/api/line/webhook',          method: 'POST', avg_latency: 1250, p99_latency: 2800, error_rate: 3.1,  req_count: 28540, status: 'Slow' },
+    { path: '/api/admin/endpoint-stats',  method: 'GET',  avg_latency: 34,   p99_latency: 89,   error_rate: 0.0,  req_count: 210,   status: 'Fast' },
+    { path: '/api/catalog/products',      method: 'GET',  avg_latency: 310,  p99_latency: 740,  error_rate: 0.8,  req_count: 5670,  status: 'Fast' },
+  ];
+
+  // Scale req_count by range for demo realism
+  const multipliers = { '1d': 1, '7d': 7, '30d': 30 };
+  const m = multipliers[range] ?? 7;
+
+  try {
+    const db = getDb();
+    // Check if we have a real request_logs table; if not, return mock
+    const tableExists = await db.get(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='request_logs'`
+    ).catch(() => null);
+
+    if (!tableExists) {
+      return res.json({
+        endpoints: mockEndpoints.map(e => ({ ...e, req_count: e.req_count * m })),
+        range,
+        source: 'mock',
+      });
+    }
+
+    // Real query if table exists
+    const rows = await db.all(`
+      SELECT
+        path,
+        method,
+        ROUND(AVG(duration_ms)) AS avg_latency,
+        MAX(duration_ms) AS p99_latency,
+        ROUND(100.0 * SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) / COUNT(*), 2) AS error_rate,
+        COUNT(*) AS req_count
+      FROM request_logs
+      WHERE created_at >= datetime('now', ?)
+      GROUP BY path, method
+      ORDER BY req_count DESC
+    `, [range === '1d' ? '-1 day' : range === '7d' ? '-7 days' : '-30 days']);
+
+    const endpoints = rows.map(r => ({
+      ...r,
+      status: r.avg_latency >= 1000 ? 'Slow' : r.avg_latency >= 500 ? 'OK' : 'Fast',
+    }));
+
+    res.json({ endpoints, range, source: 'live' });
+  } catch (err) {
+    console.error('Admin endpoint-stats error:', err);
+    res.json({
+      endpoints: mockEndpoints.map(e => ({ ...e, req_count: e.req_count * m })),
+      range,
+      source: 'mock',
+    });
+  }
+});
+
 // GET /api/admin/settings — get admin profile/settings
 router.get('/settings', async (req, res) => {
   try {
