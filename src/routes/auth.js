@@ -168,7 +168,7 @@ router.post('/login', registerLimiter, async (req, res) => {
 router.get('/me', authMiddleware, async (req, res) => {
   try {
     const db = getDb();
-    const user = await db.get('SELECT id, email, name, role, created_at FROM users WHERE id = ?', [req.userId]);
+    const user = await db.get('SELECT id, email, name, phone, company, role, created_at FROM users WHERE id = ?', [req.userId]);
 
     if (!user) {
       return res.status(404).json({
@@ -184,6 +184,29 @@ router.get('/me', authMiddleware, async (req, res) => {
       error: 'Server error',
       message: 'เกิดข้อผิดพลาด'
     });
+  }
+});
+
+router.put('/me', authMiddleware, async (req, res) => {
+  try {
+    const { name, phone, company } = req.body;
+    const db = getDb();
+
+    const safeName = name ? name.replace(/<[^>]*>/g, '').trim() : null;
+    const safePhone = phone ? phone.replace(/<[^>]*>/g, '').trim() : null;
+    const safeCompany = company ? company.replace(/<[^>]*>/g, '').trim() : null;
+
+    await db.run(
+      'UPDATE users SET name = COALESCE(?, name), phone = COALESCE(?, phone), company = COALESCE(?, company) WHERE id = ?',
+      [safeName, safePhone, safeCompany, req.userId]
+    );
+
+    const user = await db.get('SELECT id, email, name, phone, company, role, created_at FROM users WHERE id = ?', [req.userId]);
+
+    res.json({ message: 'อัปเดตโปรไฟล์สำเร็จ', user });
+  } catch (error) {
+    console.error('Update user error:', error);
+    res.status(500).json({ error: 'Server error', message: 'เกิดข้อผิดพลาด' });
   }
 });
 

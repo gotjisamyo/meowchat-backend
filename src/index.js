@@ -112,6 +112,7 @@ const authRoutes = require('./routes/auth');
 const shopRoutes = require('./routes/shops');
 const productRoutes = require('./routes/products');
 app.use('/api/auth', authRoutes);
+app.use('/api/users', authRoutes);
 app.use('/api/shops', shopRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/marketing', require('./routes/marketing'));
