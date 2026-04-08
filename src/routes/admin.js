@@ -453,4 +453,116 @@ router.get('/credits/pending', async (_req, res) => {
   }
 });
 
+// GET /api/admin/subscriptions — list all subscriptions with optional filters
+router.get('/subscriptions', async (req, res) => {
+  try {
+    const db = getDb();
+    const { plan, status } = req.query;
+
+    const conditions = [];
+    const params = [];
+
+    if (plan && plan !== 'all') {
+      conditions.push(`LOWER(p.name) LIKE LOWER(?)`);
+      params.push(`%${plan}%`);
+    }
+    if (status && status !== 'all') {
+      conditions.push(`sub.status = ?`);
+      params.push(status);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const subscriptions = await db.all(`
+      SELECT
+        sub.id,
+        sub.shop_id,
+        sub.status,
+        sub.start_date,
+        sub.end_date,
+        sub.payment_method,
+        sub.payment_status,
+        sub."createdAt" as created_at,
+        s.name as shop_name,
+        u.email as owner_email,
+        u.name as owner_name,
+        p.name as plan_name,
+        p.price as plan_price
+      FROM subscriptions sub
+      LEFT JOIN shops s ON s.id = sub.shop_id
+      LEFT JOIN users u ON u.id = s.user_id
+      LEFT JOIN plans p ON p.id = sub.plan_id
+      ${where}
+      ORDER BY sub."createdAt" DESC
+    `, params);
+
+    // MRR = sum of active subscription plan prices
+    const mrrRow = await db.get(`
+      SELECT COALESCE(SUM(p.price), 0) as mrr
+      FROM subscriptions sub
+      LEFT JOIN plans p ON p.id = sub.plan_id
+      WHERE sub.status = 'active'
+    `);
+
+    // Counts by plan
+    const planCounts = await db.all(`
+      SELECT p.name as plan_name, COUNT(*) as count
+      FROM subscriptions sub
+      LEFT JOIN plans p ON p.id = sub.plan_id
+      GROUP BY p.name
+    `);
+
+    res.json({
+      subscriptions,
+      mrr: mrrRow?.mrr ?? 0,
+      total: subscriptions.length,
+      planCounts,
+    });
+  } catch (err) {
+    console.error('Admin subscriptions error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/settings — get admin profile/settings
+router.get('/settings', async (req, res) => {
+  try {
+    const db = getDb();
+    const admin = await db.get(
+      `SELECT id, name, email, role FROM users WHERE id = ?`,
+      [req.user.id]
+    );
+    res.json({ profile: admin });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/admin/settings — update admin profile
+router.put('/settings', async (req, res) => {
+  try {
+    const { name, email } = req.body;
+    if (!name && !email) {
+      return res.status(400).json({ error: 'ต้องระบุ name หรือ email' });
+    }
+    const db = getDb();
+    const updates = [];
+    const params = [];
+    if (name) { updates.push('name = ?'); params.push(name); }
+    if (email) { updates.push('email = ?'); params.push(email.toLowerCase()); }
+    params.push(req.user.id);
+    await db.run(
+      `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
+      params
+    );
+    const updated = await db.get(
+      `SELECT id, name, email, role FROM users WHERE id = ?`,
+      [req.user.id]
+    );
+    res.json({ ok: true, profile: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
