@@ -11,6 +11,29 @@ function stripHtml(str) {
 }
 
 
+// Get primary shop for current user
+router.get('/mine', authMiddleware, async (req, res) => {
+  try {
+    const db = getDb();
+    const shop = await db.get(`
+      SELECT s.id, s.name, s.description, s.line_channel_id as lineOaId, s.created_at as createdAt
+      FROM shops s
+      WHERE s.user_id = ?
+      ORDER BY s.created_at ASC
+      LIMIT 1
+    `, [req.userId]);
+
+    if (!shop) {
+      return res.status(404).json({ error: 'Shop not found', message: 'ไม่พบร้านค้า' });
+    }
+
+    res.json({ id: shop.id, name: shop.name, description: shop.description, lineOaId: shop.lineOaId, createdAt: shop.createdAt });
+  } catch (error) {
+    console.error('Get mine shop error:', error);
+    res.status(500).json({ error: 'Server error', message: 'เกิดข้อผิดพลาด' });
+  }
+});
+
 // Get all shops for current user
 router.get('/', authMiddleware, async (req, res) => {
   try {

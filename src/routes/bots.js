@@ -905,5 +905,37 @@ router.put('/:botId/quick-replies', async (req, res) => {
   }
 });
 
+// GET /api/bots/:botId/unanswered-questions
+router.get('/:botId/unanswered-questions', async (req, res) => {
+  try {
+    const db = getDb();
+    const shop = await db.get('SELECT id FROM shops WHERE id = ? AND user_id = ?', [req.params.botId, req.userId]);
+    if (!shop) return res.status(404).json({ error: 'Not found' });
+
+    // Find user messages from escalated conversations, grouped by content
+    const rows = await db.all(`
+      SELECT cm.content as text, COUNT(*) as count, MAX(cm.created_at) as lastAskedAt,
+             MIN(cm.id) as id
+      FROM conversation_messages cm
+      JOIN conversations c ON cm.conversation_id = c.id
+      WHERE c.shop_id = ? AND c.escalated = 1 AND cm.role = 'user'
+      GROUP BY cm.content
+      ORDER BY count DESC, lastAskedAt DESC
+      LIMIT 50
+    `, [req.params.botId]);
+
+    const questions = rows.map(r => ({
+      id: r.id,
+      text: r.text,
+      count: r.count,
+      lastAskedAt: r.lastAskedAt
+    }));
+
+    res.json({ questions });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
 // GEMINI_API_KEY env var added 1775060471

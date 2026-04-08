@@ -210,6 +210,29 @@ router.put('/me', authMiddleware, async (req, res) => {
   }
 });
 
+router.post('/me/notifications', authMiddleware, async (req, res) => {
+  try {
+    const { email, line, weekly } = req.body;
+    const db = getDb();
+
+    const settings = JSON.stringify({
+      email: email === true,
+      line: line === true,
+      weekly: weekly === true
+    });
+
+    await db.run(
+      'UPDATE users SET notification_settings = ? WHERE id = ?',
+      [settings, req.userId]
+    );
+
+    res.json({ message: 'บันทึก notification settings สำเร็จ', settings: JSON.parse(settings) });
+  } catch (error) {
+    console.error('Save notifications error:', error);
+    res.status(500).json({ error: 'Server error', message: 'เกิดข้อผิดพลาด' });
+  }
+});
+
 router.put('/profile', authMiddleware, async (req, res) => {
   try {
     const { name, password } = req.body;

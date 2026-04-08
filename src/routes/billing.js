@@ -696,6 +696,47 @@ function setupBillingRoutes(app) {
       res.status(500).json({ success: false, error: error.message });
     }
   });
+
+  app.get('/api/billing/history', authMiddleware, async (req, res) => {
+    try {
+      if (!await resolveOwnedShopFromRequest(req, res)) return;
+
+      const db = getDb();
+      const { from, to } = req.query;
+
+      let query = `
+        SELECT s.id, s."createdAt" as date, p.price as amount, p.name as description, s.payment_status as status
+        FROM subscriptions s
+        JOIN plans p ON s.plan_id = p.id
+        WHERE s.shop_id = ?
+      `;
+      const params = [req.shopId];
+
+      if (from) {
+        query += ` AND s."createdAt" >= ?`;
+        params.push(from);
+      }
+      if (to) {
+        query += ` AND s."createdAt" <= ?`;
+        params.push(to);
+      }
+
+      query += ` ORDER BY s."createdAt" DESC`;
+
+      const rows = await db.all(query, params);
+      const invoices = rows.map(r => ({
+        id: r.id,
+        date: r.date,
+        amount: r.amount,
+        description: r.description,
+        status: r.status
+      }));
+
+      res.json({ success: true, data: { invoices } });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
 }
 
 module.exports = {
