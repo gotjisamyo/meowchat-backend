@@ -236,7 +236,7 @@ router.get('/', async (req, res) => {
     const db = getDb();
     const bots = await db.all(`
       SELECT s.id, s.name, s.description, s.line_channel_id, s.plan,
-             s.line_notify_token,
+             s.line_notify_token, s.slip_verify_mode,
              s.created_at, s.updated_at,
              p.name as plan_name, p.max_chats, p.max_agents
       FROM shops s
