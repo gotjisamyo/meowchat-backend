@@ -298,7 +298,7 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Bot not found', message: 'ไม่พบ bot' });
     }
 
-    const { line_access_token, line_channel_secret, slip_verify_mode,
+    const { line_access_token, line_channel_secret, line_channel_id, slip_verify_mode,
             welcome_message, away_message, working_hours_enabled, working_hours_start, working_hours_end,
             show_branding, escalation_keywords, ai_model } = req.body;
     const allowedSlipModes = ['off', 'auto', 'manual'];
@@ -312,12 +312,15 @@ router.put('/:id', async (req, res) => {
     if (line_channel_secret && String(line_channel_secret).length > MAX_TOKEN_LEN) {
       return res.status(400).json({ error: 'line_channel_secret too long' });
     }
+    // For token fields: undefined = no change (COALESCE keeps old), '' = explicit clear
+    const tokenVal = (raw) => raw === undefined ? null : (raw.trim() || '');
     await db.run(`
       UPDATE shops
       SET name = COALESCE(?, name),
           description = COALESCE(?, description),
-          line_access_token = COALESCE(?, line_access_token),
-          line_channel_secret = COALESCE(?, line_channel_secret),
+          line_access_token = CASE WHEN ? IS NULL THEN line_access_token ELSE ? END,
+          line_channel_secret = CASE WHEN ? IS NULL THEN line_channel_secret ELSE ? END,
+          line_channel_id = CASE WHEN ? IS NULL THEN line_channel_id ELSE ? END,
           slip_verify_mode = COALESCE(?, slip_verify_mode),
           welcome_message = COALESCE(?, welcome_message),
           away_message = COALESCE(?, away_message),
@@ -332,8 +335,10 @@ router.put('/:id', async (req, res) => {
     `, [
       name ? stripHtml(name) : null,
       (description || personality) ? stripHtml(description || personality) : null,
-      line_access_token || null,
-      line_channel_secret || null,
+      tokenVal(line_access_token), tokenVal(line_access_token),
+      tokenVal(line_channel_secret), tokenVal(line_channel_secret),
+      line_channel_id !== undefined ? (line_channel_id || '') : null,
+      line_channel_id !== undefined ? (line_channel_id || '') : null,
       slipMode,
       welcome_message !== undefined ? stripHtml(welcome_message) : null,
       away_message !== undefined ? stripHtml(away_message) : null,
