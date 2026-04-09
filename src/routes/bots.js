@@ -240,6 +240,7 @@ router.get('/', async (req, res) => {
              s.line_access_token, s.line_channel_secret,
              s.welcome_message, s.away_message,
              s.working_hours_enabled, s.working_hours_start, s.working_hours_end,
+             s.show_branding,
              s.created_at, s.updated_at,
              p.name as plan_name, p.max_chats, p.max_agents
       FROM shops s
@@ -298,7 +299,8 @@ router.put('/:id', async (req, res) => {
     }
 
     const { line_access_token, line_channel_secret, slip_verify_mode,
-            welcome_message, away_message, working_hours_enabled, working_hours_start, working_hours_end } = req.body;
+            welcome_message, away_message, working_hours_enabled, working_hours_start, working_hours_end,
+            show_branding } = req.body;
     const allowedSlipModes = ['off', 'auto', 'manual'];
     const slipMode = slip_verify_mode && allowedSlipModes.includes(slip_verify_mode) ? slip_verify_mode : null;
 
@@ -322,6 +324,7 @@ router.put('/:id', async (req, res) => {
           working_hours_enabled = COALESCE(?, working_hours_enabled),
           working_hours_start = COALESCE(?, working_hours_start),
           working_hours_end = COALESCE(?, working_hours_end),
+          show_branding = COALESCE(?, show_branding),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
     `, [
@@ -335,6 +338,7 @@ router.put('/:id', async (req, res) => {
       working_hours_enabled !== undefined ? (working_hours_enabled ? 1 : 0) : null,
       working_hours_start || null,
       working_hours_end || null,
+      show_branding !== undefined ? (show_branding ? 1 : 0) : null,
       req.params.id,
       req.userId
     ]);
@@ -749,7 +753,7 @@ async function syncBotToEngine(shopId, db) {
     geminiApiKey: process.env.GEMINI_API_KEY || '',
     model: 'gemini-2.0-flash',
     knowledgeBase,
-    showBranding: shop.plan !== 'active',
+    showBranding: shop.show_branding !== 0,
     subscriptionStatus: shop.subscription_status || 'trial',
     botLocked: shop.bot_locked || false,
     slipVerifyMode: shop.slip_verify_mode || 'off',

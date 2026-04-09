@@ -459,6 +459,7 @@ async function initDatabase() {
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS working_hours_enabled INTEGER DEFAULT 0`);
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS working_hours_start TEXT DEFAULT '09:00'`);
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS working_hours_end TEXT DEFAULT '21:00'`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS show_branding INTEGER DEFAULT 1`);
 
   // Seed credit packs
   await db.exec(`
