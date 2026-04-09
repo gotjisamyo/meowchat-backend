@@ -454,6 +454,11 @@ async function initDatabase() {
   // Shop bot settings — slip verification mode per shop
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS slip_verify_mode TEXT DEFAULT 'off'`);
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS quick_replies TEXT DEFAULT '[]'`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS welcome_message TEXT DEFAULT ''`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS away_message TEXT DEFAULT ''`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS working_hours_enabled INTEGER DEFAULT 0`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS working_hours_start TEXT DEFAULT '09:00'`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS working_hours_end TEXT DEFAULT '21:00'`);
 
   // Seed credit packs
   await db.exec(`

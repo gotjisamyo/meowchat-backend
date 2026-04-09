@@ -238,6 +238,8 @@ router.get('/', async (req, res) => {
       SELECT s.id, s.name, s.description, s.line_channel_id, s.plan,
              s.line_notify_token, s.slip_verify_mode,
              s.line_access_token, s.line_channel_secret,
+             s.welcome_message, s.away_message,
+             s.working_hours_enabled, s.working_hours_start, s.working_hours_end,
              s.created_at, s.updated_at,
              p.name as plan_name, p.max_chats, p.max_agents
       FROM shops s
@@ -295,15 +297,13 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Bot not found', message: 'ไม่พบ bot' });
     }
 
-    const { line_notify_token, line_access_token, line_channel_secret, slip_verify_mode } = req.body;
+    const { line_access_token, line_channel_secret, slip_verify_mode,
+            welcome_message, away_message, working_hours_enabled, working_hours_start, working_hours_end } = req.body;
     const allowedSlipModes = ['off', 'auto', 'manual'];
     const slipMode = slip_verify_mode && allowedSlipModes.includes(slip_verify_mode) ? slip_verify_mode : null;
 
-    // Guard token field lengths (LINE tokens are ~172 chars; cap at 512 to prevent DB abuse)
+    // Guard token field lengths
     const MAX_TOKEN_LEN = 512;
-    if (line_notify_token && String(line_notify_token).length > MAX_TOKEN_LEN) {
-      return res.status(400).json({ error: 'line_notify_token too long' });
-    }
     if (line_access_token && String(line_access_token).length > MAX_TOKEN_LEN) {
       return res.status(400).json({ error: 'line_access_token too long' });
     }
@@ -314,19 +314,27 @@ router.put('/:id', async (req, res) => {
       UPDATE shops
       SET name = COALESCE(?, name),
           description = COALESCE(?, description),
-          line_notify_token = COALESCE(?, line_notify_token),
           line_access_token = COALESCE(?, line_access_token),
           line_channel_secret = COALESCE(?, line_channel_secret),
           slip_verify_mode = COALESCE(?, slip_verify_mode),
+          welcome_message = COALESCE(?, welcome_message),
+          away_message = COALESCE(?, away_message),
+          working_hours_enabled = COALESCE(?, working_hours_enabled),
+          working_hours_start = COALESCE(?, working_hours_start),
+          working_hours_end = COALESCE(?, working_hours_end),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
     `, [
       name ? stripHtml(name) : null,
       (description || personality) ? stripHtml(description || personality) : null,
-      line_notify_token !== undefined ? line_notify_token : null,
       line_access_token || null,
       line_channel_secret || null,
       slipMode,
+      welcome_message !== undefined ? stripHtml(welcome_message) : null,
+      away_message !== undefined ? stripHtml(away_message) : null,
+      working_hours_enabled !== undefined ? (working_hours_enabled ? 1 : 0) : null,
+      working_hours_start || null,
+      working_hours_end || null,
       req.params.id,
       req.userId
     ]);
@@ -933,6 +941,30 @@ router.get('/:botId/unanswered-questions', async (req, res) => {
     }));
 
     res.json({ questions });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/bots/:botId/simulate — proxy to engine simulate (for Test Bot panel in dashboard)
+router.post('/:botId/simulate', async (req, res) => {
+  try {
+    const db = getDb();
+    const bot = await db.get('SELECT id FROM shops WHERE id = ? AND user_id = ?', [req.params.botId, req.userId]);
+    if (!bot) return res.status(404).json({ error: 'Bot not found' });
+
+    const engineUrl = process.env.ENGINE_URL || 'https://meowchat-engine-production.up.railway.app';
+    const engineKey = process.env.ENGINE_ADMIN_KEY;
+    const { message } = req.body;
+    if (!message) return res.status(400).json({ error: 'message required' });
+
+    const resp = await fetch(`${engineUrl}/admin/bots/${req.params.botId}/simulate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-key': engineKey },
+      body: JSON.stringify({ message }),
+    });
+    const data = await resp.json();
+    res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
