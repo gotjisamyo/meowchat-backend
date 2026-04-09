@@ -39,8 +39,12 @@ app.use(cors({
         }
       }
     : true,
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
+// Handle OPTIONS preflight for all routes
+app.options('*', cors());
 app.use(express.json({
   verify: (req, res, buf) => {
     if (req.originalUrl.startsWith('/api/billing/webhook') ||
