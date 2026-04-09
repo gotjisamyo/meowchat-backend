@@ -460,6 +460,8 @@ async function initDatabase() {
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS working_hours_start TEXT DEFAULT '09:00'`);
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS working_hours_end TEXT DEFAULT '21:00'`);
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS show_branding INTEGER DEFAULT 1`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS escalation_keywords TEXT DEFAULT ''`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS ai_model TEXT DEFAULT 'gemini-2.0-flash'`);
 
   // Seed credit packs
   await db.exec(`
