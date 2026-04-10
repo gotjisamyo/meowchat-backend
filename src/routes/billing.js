@@ -348,7 +348,8 @@ async function getUsageStats(shopId) {
       periodStart: null,
       periodEnd: null,
       isUnlimitedChats: subscription?.max_chats === -1,
-      isUnlimitedAgents: subscription?.max_agents === -1
+      isUnlimitedAgents: subscription?.max_agents === -1,
+      plan_name: subscription?.plan_name || null,
     };
   }
 
@@ -360,7 +361,8 @@ async function getUsageStats(shopId) {
     periodStart: usage.period_start,
     periodEnd: usage.period_end,
     isUnlimitedChats: subscription?.max_chats === -1,
-    isUnlimitedAgents: subscription?.max_agents === -1
+    isUnlimitedAgents: subscription?.max_agents === -1,
+    plan_name: subscription?.plan_name || null,
   };
 }
 
@@ -732,7 +734,7 @@ function setupBillingRoutes(app) {
         status: r.status
       }));
 
-      res.json({ success: true, data: { invoices } });
+      res.json({ success: true, data: invoices });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
     }

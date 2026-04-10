@@ -235,16 +235,29 @@ router.post('/me/notifications', authMiddleware, async (req, res) => {
 
 router.put('/profile', authMiddleware, async (req, res) => {
   try {
-    const { name, password } = req.body;
+    const { name, password, currentPassword, newPassword } = req.body;
     const db = getDb();
 
     const safeName = name ? name.replace(/<[^>]*>/g, '').trim() : null;
 
-    if (password) {
-      if (password.length < 8) {
-        return res.status(400).json({ error: 'Password too short', message: 'รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร' });
+    // Handle password change with verification (currentPassword + newPassword)
+    const targetPassword = newPassword || password;
+    if (targetPassword) {
+      if (targetPassword.length < 6) {
+        return res.status(400).json({ error: 'Password too short', message: 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร' });
       }
-      const passwordHash = await bcrypt.hash(password, 10);
+      // Require currentPassword when changing via newPassword (security)
+      if (newPassword) {
+        if (!currentPassword) {
+          return res.status(400).json({ error: 'Current password required', message: 'กรุณาระบุรหัสผ่านปัจจุบัน' });
+        }
+        const userRow = await db.get('SELECT password_hash FROM users WHERE id = ?', [req.userId]);
+        const valid = await bcrypt.compare(currentPassword, userRow?.password_hash || '');
+        if (!valid) {
+          return res.status(400).json({ error: 'Wrong password', message: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' });
+        }
+      }
+      const passwordHash = await bcrypt.hash(targetPassword, 10);
       await db.run('UPDATE users SET name = COALESCE(?, name), password_hash = ? WHERE id = ?', [safeName, passwordHash, req.userId]);
     } else if (safeName) {
       await db.run('UPDATE users SET name = ? WHERE id = ?', [safeName, req.userId]);
