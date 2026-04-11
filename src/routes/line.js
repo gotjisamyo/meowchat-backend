@@ -89,6 +89,79 @@ ${shopInfo.aiCustomKnowledge ? `\nข้อมูลร้าน: ${shopInfo.aiC
   return text || 'ขออภัยค่ะ ไม่สามารถตอบได้ในขณะนี้ กรุณาลองใหม่อีกครั้งนะคะ';
 }
 
+// ─── Engine routing (forward to meowchat-engine) ──────────────────────────────
+
+const ENGINE_URL = process.env.ENGINE_URL || 'https://meowchat-engine-production.up.railway.app';
+const ENGINE_ADMIN_KEY = process.env.ENGINE_ADMIN_KEY || '';
+
+function buildBotConfig(shop, products, knowledgeBase) {
+  let shopInfo = {};
+  try { shopInfo = JSON.parse(shop.description || '{}'); } catch {}
+
+  const personalityMap = { friendly: 'friendly', formal: 'formal', sales: 'sales', cute: 'cute' };
+  const personalityMode = personalityMap[shopInfo.botStyle] || 'friendly';
+
+  const kbEntries = [
+    ...products.map((p) => ({
+      id: `product-${p.name}`,
+      topic: 'สินค้า',
+      content: `${p.name} ราคา ฿${p.price}${p.stock > 0 ? ` มี ${p.stock} ชิ้น` : ' หมดแล้ว'}${p.description ? ` — ${p.description}` : ''}`,
+      keywords: [p.name],
+    })),
+    ...knowledgeBase.map((k, i) => ({
+      id: `kb-${i}`,
+      topic: k.topic,
+      content: k.content,
+      keywords: [k.topic],
+    })),
+  ];
+
+  return {
+    botId: String(shop.id),
+    botName: shopInfo.botName || shop.name || 'MeowChat Bot',
+    businessName: shop.name || '',
+    personalityMode,
+    businessScope: shopInfo.businessScope || [],
+    lineChannelSecret: shop.line_channel_secret,
+    lineChannelAccessToken: shop.line_access_token,
+    geminiApiKey: process.env.GEMINI_API_KEY || '',
+    model: 'gemini-2.0-flash',
+    knowledgeBase: kbEntries,
+    showBranding: true,
+    subscriptionStatus: shop.subscription_status || 'trial',
+    escalationKeywords: shopInfo.escalationKeywords || [],
+  };
+}
+
+async function registerBotInEngine(config) {
+  await axios.post(`${ENGINE_URL}/admin/bots`, config, {
+    headers: { 'x-admin-key': ENGINE_ADMIN_KEY, 'Content-Type': 'application/json' },
+    timeout: 5000,
+  });
+}
+
+async function callEngine(userMessage, shop, products, knowledgeBase) {
+  if (!ENGINE_ADMIN_KEY) throw new Error('ENGINE_ADMIN_KEY not set');
+  const botId = String(shop.id);
+  const payload = { message: userMessage };
+  const headers = { 'x-admin-key': ENGINE_ADMIN_KEY, 'Content-Type': 'application/json' };
+
+  try {
+    const resp = await axios.post(`${ENGINE_URL}/admin/bots/${botId}/simulate`, payload, { headers, timeout: 10000 });
+    return resp.data?.reply || null;
+  } catch (err) {
+    // Bot not registered yet — auto-register and retry once
+    if (err.response?.status === 404) {
+      console.log(`[engine] bot not found, registering shopId=${botId}`);
+      const config = buildBotConfig(shop, products, knowledgeBase);
+      await registerBotInEngine(config);
+      const resp = await axios.post(`${ENGINE_URL}/admin/bots/${botId}/simulate`, payload, { headers, timeout: 10000 });
+      return resp.data?.reply || null;
+    }
+    throw err;
+  }
+}
+
 // ─── Conversation history ──────────────────────────────────────────────────────
 
 async function saveConversationTurn(shopId, lineUserId, userText, botReply, escalated) {
@@ -157,12 +230,24 @@ async function processEvent(event, shop, products, knowledgeBase) {
       }).catch(e => console.warn('[LINE] notify failed:', e.message));
     }
     console.log(`[LINE] escalation detected shopId=${shop.id} userId=${userId}`);
-  } else if (process.env.GEMINI_API_KEY) {
+  } else if (process.env.GEMINI_API_KEY || ENGINE_ADMIN_KEY) {
     try {
-      reply = await callGemini(userText, shop, products, knowledgeBase);
+      // Try engine first (richer context: memory, vectors, personality)
+      if (ENGINE_ADMIN_KEY) {
+        reply = await callEngine(userText, shop, products, knowledgeBase);
+        console.log(`[engine] replied shopId=${shop.id}`);
+      }
+      // Fallback to direct Gemini if engine unavailable
+      if (!reply && process.env.GEMINI_API_KEY) {
+        reply = await callGemini(userText, shop, products, knowledgeBase);
+      }
     } catch (err) {
-      console.error('[Gemini error]', err.response?.data || err.message);
-      reply = 'ขออภัยค่ะ ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้งนะคะ 💕';
+      console.error('[AI error]', err.response?.data || err.message);
+      // Last-resort: direct Gemini
+      if (process.env.GEMINI_API_KEY) {
+        try { reply = await callGemini(userText, shop, products, knowledgeBase); } catch {}
+      }
+      if (!reply) reply = 'ขออภัยค่ะ ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้งนะคะ 💕';
     }
   } else {
     reply = `สวัสดีครับ! ได้รับข้อความของคุณแล้วค่ะ มีอะไรให้ช่วยไหมนะคะ? 😊`;

@@ -202,6 +202,17 @@ router.post('/payments/:id/approve', async (req, res) => {
     // Unlock bot and activate subscription for the shop
     if (payment.shop_id) {
       const paidUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+      // Resolve plan_id from payment amount (find closest plan by price, fallback to Starter id=2)
+      let resolvedPlanId = 2;
+      if (payment.amount) {
+        const matchedPlan = await db.get(
+          `SELECT id FROM plans WHERE price = ? AND is_active = TRUE ORDER BY id LIMIT 1`,
+          [payment.amount]
+        );
+        if (matchedPlan) resolvedPlanId = matchedPlan.id;
+      }
+
       await db.run(
         `UPDATE shops
          SET bot_locked = FALSE, subscription_status = 'active', updated_at = CURRENT_TIMESTAMP
@@ -215,18 +226,18 @@ router.post('/payments/:id/approve', async (req, res) => {
       );
       if (existingSub) {
         await db.run(
-          `UPDATE subscriptions SET payment_status = 'completed', end_date = ?, "updatedAt" = CURRENT_TIMESTAMP WHERE id = ?`,
-          [paidUntil, existingSub.id]
+          `UPDATE subscriptions SET plan_id = ?, payment_status = 'completed', end_date = ?, "updatedAt" = CURRENT_TIMESTAMP WHERE id = ?`,
+          [resolvedPlanId, paidUntil, existingSub.id]
         );
       } else {
         await db.run(
           `INSERT INTO subscriptions (shop_id, plan_id, status, payment_method, payment_status, end_date)
-           VALUES (?, 2, 'active', 'bank_transfer', 'completed', ?)
+           VALUES (?, ?, 'active', 'bank_transfer', 'completed', ?)
            ON CONFLICT DO NOTHING`,
-          [payment.shop_id, paidUntil]
+          [payment.shop_id, resolvedPlanId, paidUntil]
         );
       }
-      console.log(`[admin] approved payment id=${req.params.id} → unlocked shop=${payment.shop_id}`);
+      console.log(`[admin] approved payment id=${req.params.id} → unlocked shop=${payment.shop_id} plan_id=${resolvedPlanId}`);
     }
 
     const updatedPayment = await db.get('SELECT * FROM payment_notifications WHERE id = ?', [req.params.id]);
