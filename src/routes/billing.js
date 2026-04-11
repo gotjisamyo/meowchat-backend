@@ -62,6 +62,7 @@ async function getSubscription(shopId) {
     FROM subscriptions s
     JOIN plans p ON s.plan_id = p.id
     WHERE s.shop_id = ?
+      AND s.status IN ('active', 'trial')
     ORDER BY s."createdAt" DESC
     LIMIT 1
   `, [shopId]);

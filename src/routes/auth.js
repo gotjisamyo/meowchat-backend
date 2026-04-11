@@ -210,6 +210,23 @@ router.put('/me', authMiddleware, async (req, res) => {
   }
 });
 
+router.get('/me/notifications', authMiddleware, async (req, res) => {
+  try {
+    const db = getDb();
+    const user = await db.get('SELECT notification_settings FROM users WHERE id = ?', [req.userId]);
+    const defaults = { email: true, line: true, weekly: true };
+    if (!user?.notification_settings) return res.json(defaults);
+    try {
+      res.json({ ...defaults, ...JSON.parse(user.notification_settings) });
+    } catch {
+      res.json(defaults);
+    }
+  } catch (error) {
+    console.error('Get notifications error:', error);
+    res.status(500).json({ error: 'Server error', message: 'เกิดข้อผิดพลาด' });
+  }
+});
+
 router.post('/me/notifications', authMiddleware, async (req, res) => {
   try {
     const { email, line, weekly } = req.body;

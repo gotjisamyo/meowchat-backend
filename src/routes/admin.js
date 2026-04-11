@@ -524,6 +524,70 @@ router.get('/subscriptions', async (req, res) => {
   }
 });
 
+// GET /api/admin/api-usage — API usage stats + chart data (mock fallback until instrumentation is ready)
+router.get('/api-usage', async (req, res) => {
+  try {
+    const db = getDb();
+    const tableExists = await db.get(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='request_logs'`
+    ).catch(() => null);
+
+    if (tableExists) {
+      const [statsRow, chartRows] = await Promise.all([
+        db.get(`
+          SELECT
+            COUNT(*) AS total_requests,
+            ROUND(AVG(duration_ms)) AS avg_latency,
+            ROUND(100.0 * SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) / COUNT(*), 2) AS error_rate
+          FROM request_logs
+          WHERE created_at >= datetime('now', '-7 days')
+        `),
+        db.all(`
+          SELECT date(created_at) AS day, COUNT(*) AS calls
+          FROM request_logs
+          WHERE created_at >= datetime('now', '-7 days')
+          GROUP BY date(created_at)
+          ORDER BY day ASC
+        `),
+      ]);
+      return res.json({
+        stats: {
+          totalRequests: statsRow?.total_requests ?? 0,
+          avgLatency: statsRow?.avg_latency ?? 0,
+          uptime: 99.9,
+          errorRate: statsRow?.error_rate ?? 0,
+          quotaUsed: (statsRow?.total_requests ?? 0).toLocaleString(),
+          quotaLimit: '100,000',
+        },
+        chartData: chartRows.map(r => ({
+          day: new Date(r.day).toLocaleDateString('th-TH', { month: 'short', day: 'numeric' }),
+          calls: r.calls,
+        })),
+        source: 'live',
+      });
+    }
+
+    // Mock fallback
+    const now = new Date();
+    const chartData = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(now);
+      d.setDate(d.getDate() - (6 - i));
+      return {
+        day: d.toLocaleDateString('th-TH', { month: 'short', day: 'numeric' }),
+        calls: Math.floor(1200 + Math.random() * 800),
+      };
+    });
+    res.json({
+      stats: { totalRequests: 48250, avgLatency: 87, uptime: 99.8, errorRate: 0.4, quotaUsed: '48,250', quotaLimit: '100,000' },
+      chartData,
+      source: 'mock',
+    });
+  } catch (err) {
+    console.error('Admin api-usage error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // GET /api/admin/endpoint-stats — endpoint performance metrics with mock fallback
 router.get('/endpoint-stats', async (req, res) => {
   const { range = '7d' } = req.query;
