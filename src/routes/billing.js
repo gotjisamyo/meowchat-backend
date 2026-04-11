@@ -333,6 +333,13 @@ async function cancelSubscriptionByStripeSubscriptionId(stripeSubscriptionId) {
 async function getUsageStats(shopId) {
   const db = getDb();
   const subscription = await getSubscription(shopId);
+
+  // Shops without any active/trial subscription are on Trial by default
+  const trialPlan = !subscription
+    ? await db.get(`SELECT name as plan_name, max_chats, max_agents FROM plans WHERE id = 1 LIMIT 1`)
+    : null;
+  const effectiveSub = subscription || trialPlan;
+
   const usage = await db.get(`
     SELECT * FROM usage_tracking
     WHERE shop_id = ?
@@ -344,26 +351,26 @@ async function getUsageStats(shopId) {
     return {
       chats: 0,
       agents: 0,
-      maxChats: subscription?.max_chats || 0,
-      maxAgents: subscription?.max_agents || 0,
+      maxChats: effectiveSub?.max_chats || 0,
+      maxAgents: effectiveSub?.max_agents || 0,
       periodStart: null,
       periodEnd: null,
-      isUnlimitedChats: subscription?.max_chats === -1,
-      isUnlimitedAgents: subscription?.max_agents === -1,
-      plan_name: subscription?.plan_name || null,
+      isUnlimitedChats: effectiveSub?.max_chats === -1,
+      isUnlimitedAgents: effectiveSub?.max_agents === -1,
+      plan_name: effectiveSub?.plan_name || null,
     };
   }
 
   return {
     chats: usage.chats_count,
     agents: usage.agents_count,
-    maxChats: subscription?.max_chats || 0,
-    maxAgents: subscription?.max_agents || 0,
+    maxChats: effectiveSub?.max_chats || 0,
+    maxAgents: effectiveSub?.max_agents || 0,
     periodStart: usage.period_start,
     periodEnd: usage.period_end,
-    isUnlimitedChats: subscription?.max_chats === -1,
-    isUnlimitedAgents: subscription?.max_agents === -1,
-    plan_name: subscription?.plan_name || null,
+    isUnlimitedChats: effectiveSub?.max_chats === -1,
+    isUnlimitedAgents: effectiveSub?.max_agents === -1,
+    plan_name: effectiveSub?.plan_name || null,
   };
 }
 
