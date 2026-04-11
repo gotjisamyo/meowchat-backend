@@ -847,9 +847,9 @@ router.get('/:botId/unanswered-questions', async (req, res) => {
 
     const questions = rows.map(r => ({
       id: r.id,
-      text: r.text,
+      question: r.text,
       count: r.count,
-      lastAskedAt: r.lastAskedAt
+      date: r.lastAskedAt,
     }));
 
     res.json({ questions });
