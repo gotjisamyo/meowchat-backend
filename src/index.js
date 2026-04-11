@@ -336,7 +336,7 @@ app.get('/api/bots/:botId/analytics/overview', authMiddleware, async (req, res) 
          DATE(cv.created_at AT TIME ZONE 'Asia/Bangkok') as day,
          COUNT(DISTINCT cv.id) as conversations,
          COUNT(DISTINCT cv.line_user_id) as unique_users,
-         COUNT(CASE WHEN cv.escalated = TRUE THEN 1 END) as escalations
+         COUNT(CASE WHEN cv.escalated = 1 THEN 1 END) as escalations
        FROM conversations cv
        WHERE cv.shop_id = ?
          AND cv.created_at >= NOW() - INTERVAL '${days} days'
@@ -350,7 +350,7 @@ app.get('/api/bots/:botId/analytics/overview', authMiddleware, async (req, res) 
          COUNT(DISTINCT cv.id) as total_conversations,
          COUNT(cm.id) as total_messages,
          COUNT(DISTINCT cv.line_user_id) as unique_users,
-         COUNT(CASE WHEN cv.escalated = TRUE THEN 1 END) as escalations
+         COUNT(CASE WHEN cv.escalated = 1 THEN 1 END) as escalations
        FROM conversations cv
        LEFT JOIN conversation_messages cm ON cm.conversation_id = cv.id
        WHERE cv.shop_id = ? AND cv.created_at >= NOW() - INTERVAL '${days} days'`,
