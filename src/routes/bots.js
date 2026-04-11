@@ -507,11 +507,13 @@ router.get('/:botId/handoffs', async (req, res) => {
   }
 });
 
-// PATCH /api/bots/:botId/handoffs/:handoffId — resolve a handoff
+// PATCH /api/bots/:botId/handoffs/:handoffId — update handoff status
 router.patch('/:botId/handoffs/:handoffId', async (req, res) => {
   try {
     const db = getDb();
     const { botId, handoffId } = req.params;
+    const ALLOWED = ['accepted', 'closed', 'resolved'];
+    const newStatus = ALLOWED.includes(req.body.status) ? req.body.status : 'resolved';
 
     const bot = await db.get(
       'SELECT id FROM shops WHERE id = ? AND user_id = ?',
@@ -524,11 +526,11 @@ router.patch('/:botId/handoffs/:handoffId', async (req, res) => {
 
     await db.run(`
       UPDATE handoffs
-      SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      SET status = ?, resolved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND shop_id = ?
-    `, [handoffId, botId]);
+    `, [newStatus, handoffId, botId]);
 
-    res.json({ success: true, message: 'Handoff resolved' });
+    res.json({ success: true, status: newStatus });
   } catch (error) {
     console.error('Resolve handoff error:', error);
     res.status(500).json({ error: 'Server error', message: 'เกิดข้อผิดพลาด' });
