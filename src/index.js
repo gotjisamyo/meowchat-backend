@@ -500,7 +500,7 @@ async function sendWeeklySummary() {
       const stats = await db.get(`
         SELECT
           COUNT(*) as total,
-          SUM(CASE WHEN escalated = TRUE THEN 1 ELSE 0 END) as escalated
+          SUM(CASE WHEN escalated = 1 THEN 1 ELSE 0 END) as escalated
         FROM conversations
         WHERE shop_id = ?
           AND created_at >= NOW() - INTERVAL '7 days'
