@@ -884,5 +884,107 @@ router.post('/:botId/simulate', async (req, res) => {
   }
 });
 
+// GET /api/bots/:botId/stats/weekly — last 7 days conversation counts by day
+router.get('/:botId/stats/weekly', async (req, res) => {
+  try {
+    const db = getDb();
+    const bot = await db.get('SELECT id FROM shops WHERE id = ? AND user_id = ?', [req.params.botId, req.userId]);
+    if (!bot) return res.status(404).json({ error: 'Bot not found' });
+
+    const dayNames = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      days.push({ date: d.toISOString().slice(0, 10), day: dayNames[d.getDay()], count: 0 });
+    }
+
+    const rows = await db.all(
+      `SELECT DATE(created_at) as date, COUNT(*) as count FROM conversations
+       WHERE shop_id = ? AND DATE(created_at) >= ? GROUP BY DATE(created_at)`,
+      [req.params.botId, days[0].date]
+    );
+    const rowMap = {};
+    rows.forEach(r => { rowMap[r.date] = r.count; });
+    res.json({ weekly: days.map(d => ({ day: d.day, count: rowMap[d.date] || 0 })) });
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/bots/:botId/analytics/overview — 30-day stats + daily breakdown
+router.get('/:botId/analytics/overview', async (req, res) => {
+  try {
+    const db = getDb();
+    const bot = await db.get('SELECT id FROM shops WHERE id = ? AND user_id = ?', [req.params.botId, req.userId]);
+    if (!bot) return res.status(404).json({ error: 'Bot not found' });
+
+    const days = parseInt(req.query.days) || 30;
+    const fromStr = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+
+    const [totalRow, msgRow, uniqueRow, escalRow, dailyRows] = await Promise.all([
+      db.get(`SELECT COUNT(*) as count FROM conversations WHERE shop_id = ? AND DATE(created_at) >= ?`, [req.params.botId, fromStr]),
+      db.get(`SELECT COUNT(*) as count FROM conversation_messages cm JOIN conversations cv ON cv.id = cm.conversation_id WHERE cv.shop_id = ? AND DATE(cm.created_at) >= ?`, [req.params.botId, fromStr]),
+      db.get(`SELECT COUNT(DISTINCT line_user_id) as count FROM conversations WHERE shop_id = ? AND DATE(created_at) >= ?`, [req.params.botId, fromStr]),
+      db.get(`SELECT COUNT(*) as count FROM conversations WHERE shop_id = ? AND escalated = 1 AND DATE(created_at) >= ?`, [req.params.botId, fromStr]),
+      db.all(`SELECT DATE(created_at) as date, COUNT(*) as conversations FROM conversations WHERE shop_id = ? AND DATE(created_at) >= ? GROUP BY DATE(created_at) ORDER BY date`, [req.params.botId, fromStr]),
+    ]);
+
+    const total = totalRow?.count || 0;
+    const escalations = escalRow?.count || 0;
+    res.json({
+      stats: {
+        totalConversations: total,
+        totalMessages: msgRow?.count || 0,
+        uniqueUsers: uniqueRow?.count || 0,
+        escalations,
+        aiResponseRate: total > 0 ? Math.round(((total - escalations) / total) * 100) : 100,
+        timeSavedHours: Math.round(((msgRow?.count || 0) * 3) / 60),
+      },
+      daily: dailyRows,
+      topKeywords: [],
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/bots/:botId/analytics/topics — keyword frequency from user messages
+router.get('/:botId/analytics/topics', async (req, res) => {
+  try {
+    const db = getDb();
+    const bot = await db.get('SELECT id FROM shops WHERE id = ? AND user_id = ?', [req.params.botId, req.userId]);
+    if (!bot) return res.status(404).json({ error: 'Bot not found' });
+
+    const days = parseInt(req.query.days) || 30;
+    const fromStr = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+
+    const [totalRow, uniqueRow, escalRow, userMsgs] = await Promise.all([
+      db.get(`SELECT COUNT(*) as count FROM conversations WHERE shop_id = ? AND DATE(created_at) >= ?`, [req.params.botId, fromStr]),
+      db.get(`SELECT COUNT(DISTINCT line_user_id) as count FROM conversations WHERE shop_id = ? AND DATE(created_at) >= ?`, [req.params.botId, fromStr]),
+      db.get(`SELECT COUNT(*) as count FROM conversations WHERE shop_id = ? AND escalated = 1 AND DATE(created_at) >= ?`, [req.params.botId, fromStr]),
+      db.all(`SELECT cm.content FROM conversation_messages cm JOIN conversations cv ON cv.id = cm.conversation_id WHERE cv.shop_id = ? AND cm.role = 'user' AND DATE(cm.created_at) >= ? LIMIT 500`, [req.params.botId, fromStr]),
+    ]);
+
+    const stopWords = new Set(['ครับ','ค่ะ','คะ','นะ','ที่','และ','หรือ','แต่','ใน','มี','ได้','ไม่','ว่า','จะ','ให้','เป็น','ของ','มา','ไป','อยู่','ก็','แล้ว','อะไร','ยัง','ขอ','the','is','are','a','an','in','of','to','for']);
+    const freq = {};
+    userMsgs.forEach(({ content }) => {
+      content.split(/[\s,./!?;:()[\]"']+/).forEach(w => {
+        const word = w.trim().toLowerCase();
+        if (word.length >= 2 && !stopWords.has(word)) freq[word] = (freq[word] || 0) + 1;
+      });
+    });
+    const topKeywords = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([keyword, count]) => ({ keyword, count }));
+
+    res.json({
+      stats: { totalConversations: totalRow?.count || 0, totalMessages: userMsgs.length, uniqueUsers: uniqueRow?.count || 0, escalations: escalRow?.count || 0 },
+      topKeywords,
+      recentSamples: userMsgs.slice(0, 5).map(m => ({ text: m.content })),
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;
 // GEMINI_API_KEY env var added 1775060471
