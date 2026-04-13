@@ -167,6 +167,7 @@ async function initDatabase() {
   `);
 
   await db.exec(`ALTER TABLE marketing_campaigns ADD COLUMN IF NOT EXISTS shop_id TEXT`);
+  await db.exec(`ALTER TABLE marketing_campaigns ADD COLUMN IF NOT EXISTS template_id TEXT`);
 
   // Marketing Automations
   await db.exec(`

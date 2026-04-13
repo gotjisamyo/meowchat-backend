@@ -47,7 +47,7 @@ router.get('/campaigns', async (req, res) => {
 
 router.post('/campaigns', async (req, res) => {
   try {
-    const { shopId, name, type, trigger, steps } = req.body;
+    const { shopId, name, type, trigger, steps, templateId } = req.body;
     if (!shopId || !name) {
       return res.status(400).json({ error: 'shopId and name are required' });
     }
@@ -60,11 +60,11 @@ router.post('/campaigns', async (req, res) => {
 
     const db = getDb();
     const result = await db.run(`
-      INSERT INTO marketing_campaigns (shop_id, name, type, trigger, steps, status)
-      VALUES (?, ?, ?, ?, ?, 'active') RETURNING id
-    `, [req.shopId, stripHtml(name), safeType, safeTrigger, JSON.stringify(steps || [])]);
+      INSERT INTO marketing_campaigns (shop_id, name, type, trigger, steps, status, template_id)
+      VALUES (?, ?, ?, ?, ?, 'active', ?) RETURNING id
+    `, [req.shopId, stripHtml(name), safeType, safeTrigger, JSON.stringify(steps || []), templateId || null]);
 
-    res.json({ success: true, id: result.lastInsertRowid });
+    res.json({ success: true, id: result.lastInsertRowid, templateId: templateId || null });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
