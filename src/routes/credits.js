@@ -40,7 +40,7 @@ router.get('/balance/:shopId', requireOwnedShop, async (req, res) => {
   }
 });
 
-// POST /api/credits/purchase/:shopId — request to buy a credit pack
+// POST /api/credits/purchase/:shopId — request to buy a credit pack (manual/slip flow)
 router.post('/purchase/:shopId', requireOwnedShop, async (req, res) => {
   try {
     const db = getDb();
@@ -51,16 +51,20 @@ router.post('/purchase/:shopId', requireOwnedShop, async (req, res) => {
     const pack = await db.get(`SELECT * FROM credit_packs WHERE id = ? AND is_active = 1`, [packId]);
     if (!pack) return res.status(404).json({ error: 'pack not found' });
 
-    // Create a payment notification for this credit purchase
-    const result = await db.run(
-      `INSERT INTO payment_notifications
-         (shop_id, payer_name, amount, transfer_date, bank_name, account_name, account_number, status)
-       VALUES (?, ?, ?, CURRENT_DATE, 'SCB', 'MeowChat', '123-4-56789-0', 'pending') RETURNING id`,
-      [shopId, `Credit Pack ${pack.name}`, pack.price]
-    );
-    const paymentId = result.lastInsertRowid;
+    // Generate a unique reference number for this purchase
+    const refNumber = `CR-${Date.now()}-${shopId.slice(-6)}`;
 
-    // Create merchant_credits record in pending state
+    // Create a payment notification record for this credit purchase
+    const paymentResult = await db.run(
+      `INSERT INTO payment_notifications
+         (shop_id, payer_name, amount, transfer_date, bank_name, account_name, account_number, ref_number, status)
+       VALUES (?, ?, ?, CURRENT_DATE, 'กสิกรไทย (Kasikornbank)', 'นายกฤษฐาพงศ์ จิรกุลวิชยวงษ์', '089-3-66849-7', ?, 'pending')
+       RETURNING id`,
+      [shopId, `Credit Pack ${pack.name}`, pack.price, refNumber]
+    );
+    const paymentId = paymentResult.lastInsertRowid;
+
+    // Create merchant_credits record in pending state — expires_at uses inline SQL expression
     await db.run(
       `INSERT INTO merchant_credits (shop_id, messages_added, pack_id, payment_notification_id, status, expires_at)
        VALUES (?, ?, ?, ?, 'pending', NOW() + INTERVAL '90 days')`,
@@ -70,9 +74,88 @@ router.post('/purchase/:shopId', requireOwnedShop, async (req, res) => {
     res.json({
       ok: true,
       paymentId,
+      refNumber,
       pack: { name: pack.name, messages: pack.messages, price: pack.price },
-      instructions: 'โอนเงินแล้วแจ้งสลิปในหน้า Subscription เพื่อให้ทีมงาน activate เครดิต',
+      bankInfo: {
+        bankName: 'กสิกรไทย (Kasikornbank)',
+        accountName: 'นายกฤษฐาพงศ์ จิรกุลวิชยวงษ์',
+        accountNumber: '089-3-66849-7',
+      },
+      instructions: `โอนเงิน ฿${pack.price} แล้วแนบสลิปพร้อมอ้างอิงเลข ${refNumber} ในหน้า Subscription เพื่อให้ทีมงาน activate เครดิต`,
     });
+  } catch (err) {
+    console.error('[credits/purchase] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/credits/submit-slip/:shopId — merchant submits payment slip after purchase
+router.post('/submit-slip/:shopId', requireOwnedShop, async (req, res) => {
+  try {
+    const db = getDb();
+    const { shopId } = req.params;
+    const { paymentId, refNumber, proofBase64, proofFileName, proofContentType } = req.body;
+
+    if (!paymentId && !refNumber) {
+      return res.status(400).json({ error: 'paymentId or refNumber required' });
+    }
+
+    // Find the payment notification
+    let notification = null;
+    if (paymentId) {
+      notification = await db.get(
+        `SELECT id FROM payment_notifications WHERE id = ? AND shop_id = ?`,
+        [paymentId, shopId]
+      );
+    } else if (refNumber) {
+      notification = await db.get(
+        `SELECT id FROM payment_notifications WHERE ref_number = ? AND shop_id = ?`,
+        [refNumber, shopId]
+      );
+    }
+
+    if (!notification) {
+      return res.status(404).json({ error: 'payment record not found' });
+    }
+
+    // Attach slip image to the notification
+    await db.run(
+      `UPDATE payment_notifications
+       SET proof_base64 = ?, proof_file_name = ?, proof_content_type = ?,
+           status = 'pending', updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [proofBase64 || null, proofFileName || null, proofContentType || null, notification.id]
+    );
+
+    res.json({
+      ok: true,
+      message: 'บันทึกสลิปเรียบร้อย ทีมงานจะตรวจสอบและเปิดเครดิตภายใน 24 ชั่วโมง',
+    });
+  } catch (err) {
+    console.error('[credits/submit-slip] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/credits/pending/:shopId — list pending credit purchases for merchant
+router.get('/pending/:shopId', requireOwnedShop, async (req, res) => {
+  try {
+    const db = getDb();
+    const { shopId } = req.params;
+
+    const pending = await db.all(
+      `SELECT mc.id, mc.messages_added, mc.status, mc.created_at,
+              pn.amount, pn.ref_number, pn.proof_file_name, pn.status as payment_status,
+              cp.name as pack_name
+       FROM merchant_credits mc
+       LEFT JOIN payment_notifications pn ON pn.id = mc.payment_notification_id
+       LEFT JOIN credit_packs cp ON cp.id = mc.pack_id
+       WHERE mc.shop_id = ? AND mc.status != 'approved'
+       ORDER BY mc.created_at DESC`,
+      [shopId]
+    );
+
+    res.json({ pending });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -84,7 +167,6 @@ router.get('/usage/:shopId', requireOwnedShop, async (req, res) => {
     const db = getDb();
     const { shopId } = req.params;
 
-    const shop = await db.get(`SELECT * FROM shops WHERE id = ?`, [shopId]);
     const sub = await db.get(
       `SELECT p.max_chats FROM subscriptions s JOIN plans p ON p.id = s.plan_id
        WHERE s.shop_id = ? AND s.status = 'active' ORDER BY s.created_at DESC LIMIT 1`,
