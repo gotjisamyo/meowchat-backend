@@ -264,6 +264,31 @@ router.post('/payments/:id/approve', async (req, res) => {
         );
       }
       console.log(`[admin] approved payment id=${req.params.id} → unlocked shop=${payment.shop_id} plan_id=${resolvedPlanId}`);
+
+      // Trigger referral reward on first paid payment
+      const paymentCount = await db.get(
+        `SELECT COUNT(*) as cnt FROM payment_notifications WHERE shop_id = ? AND status = 'approved'`,
+        [payment.shop_id]
+      );
+      if (paymentCount.cnt === 1) {
+        const conversion = await db.get(
+          `SELECT * FROM referral_conversions WHERE referred_shop_id = ? AND rewarded = FALSE`,
+          [payment.shop_id]
+        );
+        if (conversion) {
+          const referrerShop = await db.get('SELECT * FROM shops WHERE id = ?', [conversion.referrer_shop_id]);
+          if (referrerShop) {
+            const base = referrerShop.trial_ends_at ? new Date(referrerShop.trial_ends_at) : new Date();
+            const newEndsAt = new Date(base.getTime() + 30 * 24 * 60 * 60 * 1000);
+            await db.run(
+              `UPDATE shops SET trial_ends_at = ?, subscription_status = 'trial', bot_locked = FALSE, trial_reminder_sent = FALSE WHERE id = ?`,
+              [newEndsAt.toISOString(), conversion.referrer_shop_id]
+            );
+            await db.run('UPDATE referral_conversions SET rewarded = TRUE WHERE id = ?', [conversion.id]);
+            console.log(`[referral] reward: referrer=${conversion.referrer_shop_id} (from referred=${payment.shop_id})`);
+          }
+        }
+      }
     }
 
     const updatedPayment = await db.get('SELECT * FROM payment_notifications WHERE id = ?', [req.params.id]);

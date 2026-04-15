@@ -57,6 +57,32 @@ router.get('/my', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /api/referral/discount — check if current shop is eligible for 20% first-payment discount
+router.get('/discount', authMiddleware, async (req, res) => {
+  try {
+    const db = getDb();
+    const shops = await db.all('SELECT id FROM shops WHERE user_id = ? LIMIT 1', [req.userId]);
+    if (!shops.length) return res.json({ eligible: false });
+    const shopId = shops[0].id;
+
+    const conversion = await db.get(
+      'SELECT id FROM referral_conversions WHERE referred_shop_id = ?',
+      [shopId]
+    );
+    if (!conversion) return res.json({ eligible: false });
+
+    // Only eligible if no approved payments yet
+    const paid = await db.get(
+      `SELECT COUNT(*) as cnt FROM payment_notifications WHERE shop_id = ? AND status = 'approved'`,
+      [shopId]
+    );
+    res.json({ eligible: paid.cnt === 0, discount: 20 });
+  } catch (err) {
+    console.error('Referral discount error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/referral/click — track click (called from onboarding page load)
 router.post('/click', clickLimiter, async (req, res) => {
   try {
