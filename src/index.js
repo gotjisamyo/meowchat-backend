@@ -238,6 +238,93 @@ app.post('/api/internal/slip-order', async (req, res) => {
   }
 });
 
+// ─── Internal: create order from LINE bot ────────────────────────────────────
+
+app.post('/api/internal/bot-order', async (req, res) => {
+  const key = req.headers['x-internal-key'];
+  if (!key || key !== process.env.INTERNAL_API_KEY) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+
+  const { botId, lineUserId, items, note } = req.body;
+  if (!botId || !lineUserId || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'botId, lineUserId, and items required' });
+  }
+
+  try {
+    const { getDb } = require('./db');
+    const db = await getDb();
+
+    // Resolve product IDs by fuzzy name match within this shop
+    const resolvedItems = [];
+    let computedTotal = 0;
+
+    for (const { name, qty = 1 } of items) {
+      const quantity = Math.max(1, parseInt(qty) || 1);
+      // Case-insensitive partial match
+      const product = await db.get(
+        `SELECT * FROM products WHERE shop_id = ? AND LOWER(name) LIKE LOWER(?) AND status = 'active' LIMIT 1`,
+        [botId, `%${name}%`]
+      );
+      if (!product) {
+        return res.status(422).json({ error: `ไม่พบสินค้า: ${name}`, item: name });
+      }
+      const price = Number(product.price) || 0;
+      computedTotal += price * quantity;
+      resolvedItems.push({ productId: product.id, productName: product.name, quantity, price });
+    }
+
+    // Find or create customer record by lineUserId
+    const customer = await db.get(
+      `SELECT * FROM customers WHERE shop_id = ? AND line_user_id = ? LIMIT 1`,
+      [botId, lineUserId]
+    );
+
+    const orderId = 'ord_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    const orderNumber = 'BOT-' + Date.now();
+    const now = new Date().toISOString();
+
+    // Deduct stock for สินค้า type items
+    for (const ri of resolvedItems) {
+      const inv = await db.get(
+        'SELECT * FROM inventory WHERE shop_id = ? AND product_id = ?',
+        [botId, ri.productId]
+      );
+      if (inv) {
+        await db.run(
+          'UPDATE inventory SET quantity = MAX(0, quantity - ?), updated_at = ? WHERE id = ?',
+          [ri.quantity, now, inv.id]
+        );
+      }
+    }
+
+    await db.run(
+      `INSERT INTO orders (id, shop_id, customer_id, order_number, status, items, total_amount, payment_method, note, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'pending', ?, ?, 'bot', ?, ?, ?)`,
+      [
+        orderId, botId, customer?.id ?? null, orderNumber, 'pending',
+        JSON.stringify(resolvedItems), computedTotal,
+        note ?? '', now, now
+      ]
+    );
+
+    // Update customer stats
+    if (customer?.id) {
+      await db.run(
+        `UPDATE customers SET total_orders = total_orders + 1, total_spent = total_spent + ?,
+         last_order_at = ?, first_order_at = COALESCE(first_order_at, ?), updated_at = ?
+         WHERE id = ?`,
+        [computedTotal, now, now, now, customer.id]
+      );
+    }
+
+    res.json({ ok: true, orderNumber, items: resolvedItems, total: computedTotal });
+  } catch (err) {
+    console.error('[internal/bot-order] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Analytics: what customers are asking about ──────────────────────────────
 app.get('/api/bots/:botId/analytics/topics', authMiddleware, async (req, res) => {
   try {
