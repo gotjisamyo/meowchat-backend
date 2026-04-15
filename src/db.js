@@ -586,6 +586,41 @@ async function initDatabase() {
     );
   }
 
+  // Auto-fix subscription plan_id based on most recent approved payment amount
+  // Runs on every startup — corrects any wrong plan assignments
+  try {
+    const shopsWithPayments = await db.all(`
+      SELECT pn.shop_id, pn.amount
+      FROM payment_notifications pn
+      WHERE pn.status = 'approved' AND pn.amount IS NOT NULL
+        AND pn.created_at = (
+          SELECT MAX(p2.created_at) FROM payment_notifications p2
+          WHERE p2.shop_id = pn.shop_id AND p2.status = 'approved'
+        )
+      GROUP BY pn.shop_id
+    `);
+    for (const { shop_id, amount } of shopsWithPayments) {
+      const plan = await db.get(
+        `SELECT id FROM plans WHERE price = ? AND is_active = TRUE ORDER BY id LIMIT 1`,
+        [amount]
+      );
+      if (!plan) continue;
+      const sub = await db.get(
+        `SELECT id, plan_id FROM subscriptions WHERE shop_id = ? AND status IN ('active','trial') ORDER BY "createdAt" DESC LIMIT 1`,
+        [shop_id]
+      );
+      if (sub && sub.plan_id !== plan.id) {
+        await db.run(
+          `UPDATE subscriptions SET plan_id = ?, status = 'active', "updatedAt" = CURRENT_TIMESTAMP WHERE id = ?`,
+          [plan.id, sub.id]
+        );
+        console.log(`[migration] fixed subscription plan for shop=${shop_id}: plan_id ${sub.plan_id} → ${plan.id}`);
+      }
+    }
+  } catch (e) {
+    console.warn('[migration] plan fix skipped:', e.message);
+  }
+
   console.log('✅ Database initialized successfully');
 }
 
