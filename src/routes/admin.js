@@ -120,7 +120,7 @@ router.get('/shops', async (req, res) => {
 router.patch('/shops/:id/plan', async (req, res) => {
   try {
     const { plan } = req.body || {};
-    const allowedPlans = ['free', 'starter', 'business', 'enterprise'];
+    const allowedPlans = ['free', 'trial', 'starter', 'pro', 'business', 'enterprise'];
 
     if (!plan || !allowedPlans.includes(String(plan).toLowerCase())) {
       return res.status(400).json({
@@ -136,11 +136,37 @@ router.patch('/shops/:id/plan', async (req, res) => {
       return res.status(404).json({ error: 'Shop not found', message: 'ไม่พบร้านค้า' });
     }
 
-    await db.run(`
-      UPDATE shops
-      SET plan = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `, [String(plan).toLowerCase(), req.params.id]);
+    const planKey = String(plan).toLowerCase();
+
+    // Update shops.plan
+    await db.run(
+      `UPDATE shops SET plan = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [planKey, req.params.id]
+    );
+
+    // Also sync subscriptions.plan_id so Sidebar/billing shows correct plan
+    const planRow = await db.get(
+      `SELECT id FROM plans WHERE LOWER(name) = ? AND is_active = TRUE LIMIT 1`,
+      [planKey === 'free' ? 'trial' : planKey]
+    );
+    if (planRow) {
+      const existingSub = await db.get(
+        `SELECT id FROM subscriptions WHERE shop_id = ? AND status IN ('active', 'trial') ORDER BY "createdAt" DESC LIMIT 1`,
+        [req.params.id]
+      );
+      const newStatus = (planKey === 'free' || planKey === 'trial') ? 'trial' : 'active';
+      if (existingSub) {
+        await db.run(
+          `UPDATE subscriptions SET plan_id = ?, status = ?, "updatedAt" = CURRENT_TIMESTAMP WHERE id = ?`,
+          [planRow.id, newStatus, existingSub.id]
+        );
+      } else {
+        await db.run(
+          `INSERT INTO subscriptions (shop_id, plan_id, status, payment_method, payment_status) VALUES (?, ?, ?, 'manual', 'completed')`,
+          [req.params.id, planRow.id, newStatus]
+        );
+      }
+    }
 
     const shop = await db.get(`
       SELECT s.*, u.email AS owner_email, u.name AS owner_name, u.role AS owner_role
