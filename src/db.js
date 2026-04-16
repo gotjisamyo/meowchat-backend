@@ -425,6 +425,17 @@ async function initDatabase() {
   await db.exec(`CREATE INDEX IF NOT EXISTS idx_broadcasts_shop_id ON broadcasts(shop_id)`);
   await db.exec(`ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS image_url TEXT`);
 
+  // Uploads table — stores uploaded images as base64 in DB (no external storage needed)
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS uploads (
+      id SERIAL PRIMARY KEY,
+      data TEXT NOT NULL,
+      mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
+      user_id TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   // Credit packs — predefined top-up bundles
   await db.exec(`
     CREATE TABLE IF NOT EXISTS credit_packs (
