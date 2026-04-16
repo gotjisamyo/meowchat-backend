@@ -318,6 +318,22 @@ app.post('/api/internal/bot-order', async (req, res) => {
       );
     }
 
+    // LINE Notify to merchant — fire-and-forget, don't block response
+    (async () => {
+      try {
+        const shop = await db.get('SELECT line_notify_token, name FROM shops WHERE id = ?', [botId]);
+        if (shop?.line_notify_token) {
+          const itemLines = resolvedItems.map(i => `• ${i.productName} x${i.quantity} ฿${(i.price * i.quantity).toLocaleString()}`).join('\n');
+          const msg = `\n🛒 ออเดอร์ใหม่ ${orderNumber}\nยอดรวม: ฿${computedTotal.toLocaleString()}\n${itemLines}${note ? `\nหมายเหตุ: ${note}` : ''}`;
+          await fetch('https://notify-api.line.me/api/notify', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ message: msg }),
+          });
+        }
+      } catch (e) { console.warn('[notify] bot-order notify failed:', e.message); }
+    })();
+
     res.json({ ok: true, orderNumber, items: resolvedItems, total: computedTotal });
   } catch (err) {
     console.error('[internal/bot-order] error:', err);
