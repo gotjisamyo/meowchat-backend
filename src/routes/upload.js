@@ -14,8 +14,9 @@ cloudinary.config({
 
 // POST /api/upload/image — upload image to Cloudinary, return URL (auth applied at app level)
 router.post('/image', upload.single('file'), async (req, res) => {
-  if (!process.env.CLOUDINARY_CLOUD_NAME) {
-    return res.status(503).json({ error: 'Image upload not configured (missing CLOUDINARY_CLOUD_NAME)' });
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  if (!cloudName || cloudName === 'REPLACE_ME') {
+    return res.status(503).json({ error: 'Image upload not configured — set CLOUDINARY_CLOUD_NAME in Railway' });
   }
   if (!req.file) {
     return res.status(400).json({ error: 'No file provided' });
