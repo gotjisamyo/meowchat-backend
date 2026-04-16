@@ -169,6 +169,7 @@ app.use('/api/bookings', require('./routes/bookings'));
 app.use('/api/team', require('./routes/team'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/payment', require('./routes/payment'));
+app.use('/api/handoffs', require('./routes/handoffs'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/referral', require('./routes/referral'));
 app.use('/api/credits', authMiddleware, require('./routes/credits'));

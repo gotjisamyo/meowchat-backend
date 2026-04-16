@@ -220,14 +220,24 @@ async function processEvent(event, shop, products, knowledgeBase) {
   if (escalated) {
     reply = `ขอโทษที่ทำให้ไม่สะดวกนะคะ ทางร้านจะให้ทีมงานติดต่อกลับโดยเร็วที่สุดนะคะ ขอบคุณที่รอค่ะ 🙏`;
 
-    // Notify merchant via LINE Notify (line_notify_token = merchant's token, not channel ID)
-    if (shop.line_notify_token) {
-      const notifyText = `\n🔔 ลูกค้าต้องการความช่วยเหลือ!\nข้อความ: "${userText}"\n\nตอบกลับที่ my.meowchat.store/handoff`;
-      fetch('https://notify-api.line.me/api/notify', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ message: notifyText }),
-      }).catch(e => console.warn('[LINE] notify failed:', e.message));
+    // Save handoff record
+    const db = getDb();
+    const handoffId = crypto.randomUUID();
+    await db.run(
+      `INSERT INTO handoffs (id, shop_id, line_user_id, message, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [handoffId, shop.id, userId, userText]
+    ).catch(e => console.error('[handoff save error]', e.message));
+
+    // Push LINE notification to admin (Got)
+    const adminUserId = process.env.ADMIN_LINE_USER_ID;
+    const channelToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+    if (adminUserId && channelToken) {
+      pushToLine(
+        adminUserId,
+        `🔔 ลูกค้าต้องการคุยกับคน!\nร้าน: ${shop.name}\nข้อความ: "${userText}"\n\n👉 app.meowchat.store`,
+        channelToken
+      );
     }
     console.log(`[LINE] escalation detected shopId=${shop.id} userId=${userId}`);
   } else if (process.env.GEMINI_API_KEY || ENGINE_ADMIN_KEY) {
