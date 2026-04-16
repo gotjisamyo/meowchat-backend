@@ -240,6 +240,20 @@ app.post('/api/internal/log', async (req, res) => {
       );
     }
 
+    // Auto-create customer record if first time seeing this LINE user
+    const existingCustomer = await db.get(
+      'SELECT id FROM customers WHERE shop_id = ? AND line_user_id = ? LIMIT 1',
+      [botId, lineUserId]
+    );
+    if (!existingCustomer) {
+      const custId = 'cust_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+      await db.run(
+        `INSERT INTO customers (id, shop_id, line_user_id, name, customer_group, status)
+         VALUES (?, ?, ?, ?, 'regular', 'active')`,
+        [custId, botId, lineUserId, `LINE ${lineUserId.slice(-6)}`]
+      ).catch(() => {}); // ignore duplicate in race
+    }
+
     // Send LINE Notify to merchant when newly escalated
     if (escalated && !wasEscalated) {
       sendLineNotify(db, botId, lineUserId, userText).catch(e =>
