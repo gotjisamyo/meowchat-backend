@@ -63,6 +63,48 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
+// ─── Request logging middleware — feeds /api/admin/api-usage + /endpoint-stats ──
+const SKIP_LOG_PREFIXES = ['/health', '/api/line/webhook', '/api/internal/'];
+
+// Normalize path: replace UUIDs and numeric IDs with :id so grouping works
+function normalizePath(p) {
+  return p
+    .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '/:id')
+    .replace(/\/\d+/g, '/:id');
+}
+
+let _pruneScheduled = false;
+function scheduleLogPrune(db) {
+  if (_pruneScheduled) return;
+  _pruneScheduled = true;
+  setTimeout(async () => {
+    _pruneScheduled = false;
+    try {
+      await db.run(`DELETE FROM request_logs WHERE created_at < NOW() - INTERVAL '30 days'`);
+    } catch { /* ignore */ }
+  }, 5000);
+}
+
+app.use((req, res, next) => {
+  const skip = SKIP_LOG_PREFIXES.some(p => req.path.startsWith(p));
+  if (skip) return next();
+  const startMs = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - startMs;
+    const path = normalizePath(req.path);
+    try {
+      const { getDb } = require('./db');
+      const db = getDb();
+      db.run(
+        `INSERT INTO request_logs (path, method, status_code, duration_ms) VALUES (?, ?, ?, ?)`,
+        [path, req.method, res.statusCode, duration]
+      ).catch(() => {});
+      scheduleLogPrune(db);
+    } catch { /* db not ready yet */ }
+  });
+  next();
+});
+
 // LINE Bot SDK configuration
 const lineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || '',

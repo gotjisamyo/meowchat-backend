@@ -762,63 +762,43 @@ router.get('/analytics/marketing', async (_req, res) => {
   }
 });
 
-// GET /api/admin/api-usage — API usage stats + chart data (mock fallback until instrumentation is ready)
+// GET /api/admin/api-usage — API usage stats + chart data from request_logs
 router.get('/api-usage', async (req, res) => {
   try {
     const db = getDb();
-    const tableExists = await db.get(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='request_logs'`
-    ).catch(() => null);
+    const [statsRow, chartRows] = await Promise.all([
+      db.get(`
+        SELECT
+          COUNT(*) AS total_requests,
+          ROUND(AVG(duration_ms)) AS avg_latency,
+          ROUND(100.0 * SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 2) AS error_rate
+        FROM request_logs
+        WHERE created_at >= NOW() - INTERVAL '7 days'
+      `).catch(() => null),
+      db.all(`
+        SELECT DATE(created_at) AS day, COUNT(*) AS calls
+        FROM request_logs
+        WHERE created_at >= NOW() - INTERVAL '7 days'
+        GROUP BY DATE(created_at)
+        ORDER BY day ASC
+      `).catch(() => []),
+    ]);
 
-    if (tableExists) {
-      const [statsRow, chartRows] = await Promise.all([
-        db.get(`
-          SELECT
-            COUNT(*) AS total_requests,
-            ROUND(AVG(duration_ms)) AS avg_latency,
-            ROUND(100.0 * SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) / COUNT(*), 2) AS error_rate
-          FROM request_logs
-          WHERE created_at >= datetime('now', '-7 days')
-        `),
-        db.all(`
-          SELECT date(created_at) AS day, COUNT(*) AS calls
-          FROM request_logs
-          WHERE created_at >= datetime('now', '-7 days')
-          GROUP BY date(created_at)
-          ORDER BY day ASC
-        `),
-      ]);
-      return res.json({
-        stats: {
-          totalRequests: statsRow?.total_requests ?? 0,
-          avgLatency: statsRow?.avg_latency ?? 0,
-          uptime: 99.9,
-          errorRate: statsRow?.error_rate ?? 0,
-          quotaUsed: (statsRow?.total_requests ?? 0).toLocaleString(),
-          quotaLimit: '100,000',
-        },
-        chartData: chartRows.map(r => ({
-          day: new Date(r.day).toLocaleDateString('th-TH', { month: 'short', day: 'numeric' }),
-          calls: r.calls,
-        })),
-        source: 'live',
-      });
-    }
-
-    // Mock fallback
-    const now = new Date();
-    const chartData = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(now);
-      d.setDate(d.getDate() - (6 - i));
-      return {
-        day: d.toLocaleDateString('th-TH', { month: 'short', day: 'numeric' }),
-        calls: Math.floor(1200 + Math.random() * 800),
-      };
-    });
+    const total = Number(statsRow?.total_requests ?? 0);
     res.json({
-      stats: { totalRequests: 48250, avgLatency: 87, uptime: 99.8, errorRate: 0.4, quotaUsed: '48,250', quotaLimit: '100,000' },
-      chartData,
-      source: 'mock',
+      stats: {
+        totalRequests: total,
+        avgLatency: Number(statsRow?.avg_latency ?? 0),
+        uptime: 99.9,
+        errorRate: Number(statsRow?.error_rate ?? 0),
+        quotaUsed: total.toLocaleString(),
+        quotaLimit: '100,000',
+      },
+      chartData: chartRows.map(r => ({
+        day: new Date(r.day).toLocaleDateString('th-TH', { month: 'short', day: 'numeric' }),
+        calls: Number(r.calls),
+      })),
+      source: 'live',
     });
   } catch (err) {
     console.error('Admin api-usage error:', err);
@@ -826,67 +806,47 @@ router.get('/api-usage', async (req, res) => {
   }
 });
 
-// GET /api/admin/endpoint-stats — endpoint performance metrics with mock fallback
+// GET /api/admin/endpoint-stats — endpoint performance metrics from request_logs
 router.get('/endpoint-stats', async (req, res) => {
   const { range = '7d' } = req.query;
-
-  // Mock data — replace with real metrics when instrumentation is ready
-  const mockEndpoints = [
-    { path: '/api/auth/login',            method: 'POST', avg_latency: 142,  p99_latency: 380,  error_rate: 0.5,  req_count: 4820,  status: 'Fast' },
-    { path: '/api/admin/stats',           method: 'GET',  avg_latency: 87,   p99_latency: 210,  error_rate: 0.0,  req_count: 1230,  status: 'Fast' },
-    { path: '/api/dashboard',             method: 'GET',  avg_latency: 563,  p99_latency: 1120, error_rate: 1.2,  req_count: 9410,  status: 'OK'   },
-    { path: '/api/line/webhook',          method: 'POST', avg_latency: 1250, p99_latency: 2800, error_rate: 3.1,  req_count: 28540, status: 'Slow' },
-    { path: '/api/admin/endpoint-stats',  method: 'GET',  avg_latency: 34,   p99_latency: 89,   error_rate: 0.0,  req_count: 210,   status: 'Fast' },
-    { path: '/api/catalog/products',      method: 'GET',  avg_latency: 310,  p99_latency: 740,  error_rate: 0.8,  req_count: 5670,  status: 'Fast' },
-  ];
-
-  // Scale req_count by range for demo realism
-  const multipliers = { '1d': 1, '7d': 7, '30d': 30 };
-  const m = multipliers[range] ?? 7;
+  const intervalMap = { '1d': '1 day', '7d': '7 days', '30d': '30 days' };
+  const interval = intervalMap[range] ?? '7 days';
 
   try {
     const db = getDb();
-    // Check if we have a real request_logs table; if not, return mock
-    const tableExists = await db.get(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='request_logs'`
-    ).catch(() => null);
-
-    if (!tableExists) {
-      return res.json({
-        endpoints: mockEndpoints.map(e => ({ ...e, req_count: e.req_count * m })),
-        range,
-        source: 'mock',
-      });
-    }
-
-    // Real query if table exists
     const rows = await db.all(`
       SELECT
         path,
         method,
         ROUND(AVG(duration_ms)) AS avg_latency,
-        MAX(duration_ms) AS p99_latency,
-        ROUND(100.0 * SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) / COUNT(*), 2) AS error_rate,
+        PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY duration_ms) AS p99_latency,
+        ROUND(100.0 * SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 2) AS error_rate,
         COUNT(*) AS req_count
       FROM request_logs
-      WHERE created_at >= datetime('now', ?)
+      WHERE created_at >= NOW() - INTERVAL '${interval}'
       GROUP BY path, method
       ORDER BY req_count DESC
-    `, [range === '1d' ? '-1 day' : range === '7d' ? '-7 days' : '-30 days']);
+      LIMIT 50
+    `).catch(() => []);
+
+    if (rows.length === 0) {
+      return res.json({ endpoints: [], range, source: 'empty' });
+    }
 
     const endpoints = rows.map(r => ({
-      ...r,
-      status: r.avg_latency >= 1000 ? 'Slow' : r.avg_latency >= 500 ? 'OK' : 'Fast',
+      path: r.path,
+      method: r.method,
+      avg_latency: Number(r.avg_latency ?? 0),
+      p99_latency: Math.round(Number(r.p99_latency ?? 0)),
+      error_rate: Number(r.error_rate ?? 0),
+      req_count: Number(r.req_count),
+      status: Number(r.avg_latency) >= 1000 ? 'Slow' : Number(r.avg_latency) >= 500 ? 'OK' : 'Fast',
     }));
 
     res.json({ endpoints, range, source: 'live' });
   } catch (err) {
     console.error('Admin endpoint-stats error:', err);
-    res.json({
-      endpoints: mockEndpoints.map(e => ({ ...e, req_count: e.req_count * m })),
-      range,
-      source: 'mock',
-    });
+    res.status(500).json({ error: err.message });
   }
 });
 

@@ -552,6 +552,20 @@ async function initDatabase() {
   await db.exec(`CREATE INDEX IF NOT EXISTS idx_shop_events_shop_event ON shop_events(shop_id, event)`);
   await db.exec(`CREATE INDEX IF NOT EXISTS idx_shop_events_event ON shop_events(event)`);
 
+  // Request logs table — used by /api/admin/api-usage and /api/admin/endpoint-stats
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS request_logs (
+      id SERIAL PRIMARY KEY,
+      path TEXT NOT NULL,
+      method TEXT NOT NULL,
+      status_code INTEGER NOT NULL,
+      duration_ms INTEGER NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at)`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_request_logs_path ON request_logs(path)`);
+
   // Create indexes for performance
   await db.exec(`
     CREATE INDEX IF NOT EXISTS idx_shops_user_id ON shops(user_id);
