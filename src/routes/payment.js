@@ -210,6 +210,20 @@ router.post('/notify', authMiddleware, async (req, res) => {
       message: 'บันทึกการแจ้งโอนเรียบร้อยแล้ว'
     });
 
+    // Push LINE message to admin (fire-and-forget)
+    const adminUserId = process.env.ADMIN_LINE_USER_ID;
+    const channelToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+    if (adminUserId && channelToken) {
+      fetch('https://api.line.me/v2/bot/message/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${channelToken}` },
+        body: JSON.stringify({
+          to: adminUserId,
+          messages: [{ type: 'text', text: `💰 สลิปใหม่!\nร้าน: ${normalizedShopId}\nชื่อ: ${normalizedPayerName}\nจำนวน: ฿${parsedAmount.toLocaleString()}\n\n👉 app.meowchat.store` }],
+        }),
+      }).catch(() => {});
+    }
+
   } catch (error) {
     console.error('payment notify error:', error);
     res.status(500).json({ success: false, error: error.message });
