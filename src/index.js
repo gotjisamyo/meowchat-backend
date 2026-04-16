@@ -741,7 +741,7 @@ async function sendTrialReminders() {
     for (const shop of shops) {
       if (!shop.line_notify_token) continue;
       const daysLeft = 4;
-      const msg = `\n⏰ ทดลองใช้ MeowChat เหลืออีก ${daysLeft} วัน!\n\nบอทของคุณตอบลูกค้าให้คุณทุกวัน อย่าให้มันหยุดทำงาน\n\n👉 Upgrade ที่ my.meowchat.store/subscription\n✅ Pro ฿376/เดือน — คุ้มกว่าจ้างพนักงานตอบ LINE`;
+      const msg = `\n⏰ ทดลองใช้ MeowChat เหลืออีก ${daysLeft} วัน!\n\nบอทของคุณตอบลูกค้าให้คุณทุกวัน อย่าให้มันหยุดทำงาน\n\n👉 Upgrade ที่ my.meowchat.store/subscription\n✅ Starter ฿490/เดือน — คุ้มกว่าจ้างพนักงานตอบ LINE`;
       try {
         await fetch('https://notify-api.line.me/api/notify', {
           method: 'POST',
@@ -864,7 +864,7 @@ async function runSubscriptionStateMachine() {
       await db.run(`UPDATE shops SET bot_locked = TRUE, subscription_status = 'expired' WHERE id = ?`, [shop.id]);
       // Notify owner
       if (shop.line_notify_token) {
-        const msg = `\n🔒 บอท MeowChat ของ "${shop.name}" หยุดทำงานชั่วคราว\n\nกรุณา Upgrade เพื่อเปิดใช้งานอีกครั้ง\n👉 my.meowchat.store/subscription\nPro ฿376/เดือน`;
+        const msg = `\n🔒 บอท MeowChat ของ "${shop.name}" หยุดทำงานชั่วคราว\n\nกรุณา Upgrade เพื่อเปิดใช้งานอีกครั้ง\n👉 my.meowchat.store/subscription\nStarter ฿490/เดือน`;
         fetch('https://notify-api.line.me/api/notify', {
           method: 'POST',
           headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
