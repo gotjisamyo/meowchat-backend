@@ -252,6 +252,30 @@ app.post('/api/internal/log', async (req, res) => {
          VALUES (?, ?, ?, ?, 'regular', 'active')`,
         [custId, botId, lineUserId, `LINE ${lineUserId.slice(-6)}`]
       ).catch(() => {}); // ignore duplicate in race
+
+      // Fire-and-forget: fetch LINE display name and update
+      (async () => {
+        try {
+          const shop = await db.get('SELECT line_access_token FROM shops WHERE id = ?', [botId]);
+          if (!shop?.line_access_token) return;
+          const profileRes = await fetch(`https://api.line.me/v2/bot/profile/${lineUserId}`, {
+            headers: { Authorization: `Bearer ${shop.line_access_token}` },
+          });
+          if (!profileRes.ok) return;
+          const profile = await profileRes.json();
+          if (profile.displayName) {
+            await db.run(
+              'UPDATE customers SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+              [profile.displayName, custId]
+            );
+            // Also update conversation customer_name
+            await db.run(
+              'UPDATE conversations SET customer_name = ? WHERE shop_id = ? AND line_user_id = ?',
+              [profile.displayName, botId, lineUserId]
+            );
+          }
+        } catch { /* non-fatal */ }
+      })();
     }
 
     // Send LINE Notify to merchant when newly escalated
