@@ -16,6 +16,11 @@ router.get('/stats', async (req, res) => {
       totalUsers,
       planCounts,
       recentShops,
+      todayRevenueRow,
+      monthRevenueRow,
+      yearRevenueRow,
+      apiCallsTodayRow,
+      paidShopsRow,
     ] = await Promise.all([
       db.get('SELECT COUNT(*) as count FROM shops'),
       db.get('SELECT COUNT(*) as count FROM users'),
@@ -25,10 +30,25 @@ router.get('/stats', async (req, res) => {
         FROM shops s LEFT JOIN users u ON u.id = s.user_id
         ORDER BY s.created_at DESC LIMIT 10
       `),
+      db.get(`SELECT COALESCE(SUM(amount),0) as total FROM payment_notifications
+              WHERE status='approved' AND DATE(created_at) = CURRENT_DATE`).catch(() => ({ total: 0 })),
+      db.get(`SELECT COALESCE(SUM(amount),0) as total FROM payment_notifications
+              WHERE status='approved'
+                AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', NOW())`).catch(() => ({ total: 0 })),
+      db.get(`SELECT COALESCE(SUM(amount),0) as total FROM payment_notifications
+              WHERE status='approved'
+                AND DATE_TRUNC('year', created_at) = DATE_TRUNC('year', NOW())`).catch(() => ({ total: 0 })),
+      db.get(`SELECT COUNT(*) as count FROM conversation_messages
+              WHERE role='assistant' AND DATE(created_at) = CURRENT_DATE`).catch(() => ({ count: 0 })),
+      db.get(`SELECT COUNT(DISTINCT shop_id) as count FROM payment_notifications
+              WHERE status='approved'`).catch(() => ({ count: 0 })),
     ]);
 
     const byPlan = { free: 0, starter: 0, business: 0, enterprise: 0 };
     planCounts.forEach(r => { byPlan[r.plan] = r.count; });
+
+    const totalShopsCount = Number(totalShops.count) || 1;
+    const paidShopsCount = Number(paidShopsRow?.count) || 0;
 
     res.json({
       totalShops: totalShops.count,
@@ -36,6 +56,11 @@ router.get('/stats', async (req, res) => {
       activeShops: totalShops.count,
       byPlan,
       recentShops,
+      todayRevenue: Number(todayRevenueRow?.total) || 0,
+      monthRevenue: Number(monthRevenueRow?.total) || 0,
+      yearRevenue: Number(yearRevenueRow?.total) || 0,
+      apiCallsToday: Number(apiCallsTodayRow?.count) || 0,
+      conversionRate: Math.round((paidShopsCount / totalShopsCount) * 100 * 10) / 10,
     });
   } catch (err) {
     console.error('Admin stats error:', err);
