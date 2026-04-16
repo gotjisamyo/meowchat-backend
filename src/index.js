@@ -123,6 +123,7 @@ app.use('/api/marketing', require('./routes/marketing'));
 app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/crm', require('./routes/crm'));
 app.use('/api/orders', require('./routes/orders'));
+app.use('/api/bookings', require('./routes/bookings'));
 app.use('/api/team', require('./routes/team'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/payment', require('./routes/payment'));
@@ -337,6 +338,59 @@ app.post('/api/internal/bot-order', async (req, res) => {
     res.json({ ok: true, orderNumber, items: resolvedItems, total: computedTotal });
   } catch (err) {
     console.error('[internal/bot-order] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Internal: Bot Booking Creation ──────────────────────────────────────────
+app.post('/api/internal/bot-booking', async (req, res) => {
+  const key = req.headers['x-internal-key'];
+  if (!key || key !== process.env.INTERNAL_API_KEY) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+
+  const { botId, lineUserId, service, datetime, note } = req.body;
+  if (!botId || !lineUserId || !service) {
+    return res.status(400).json({ error: 'botId, lineUserId, and service required' });
+  }
+
+  try {
+    const { getDb } = require('./db');
+    const db = await getDb();
+
+    const customer = await db.get(
+      `SELECT * FROM customers WHERE shop_id = ? AND line_user_id = ? LIMIT 1`,
+      [botId, lineUserId]
+    );
+
+    const bookingId = 'bk_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    const now = new Date().toISOString();
+
+    await db.run(
+      `INSERT INTO bookings (id, shop_id, customer_id, line_user_id, customer_name, service, booking_datetime, status, note, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      [bookingId, botId, customer?.id ?? null, lineUserId, customer?.name ?? 'ลูกค้า', service, datetime ?? null, note ?? '', now, now]
+    );
+
+    // LINE Notify to merchant — fire-and-forget
+    (async () => {
+      try {
+        const shop = await db.get('SELECT line_notify_token FROM shops WHERE id = ?', [botId]);
+        if (shop?.line_notify_token) {
+          const dateStr = datetime ? `\nวันเวลา: ${datetime}` : '';
+          const msg = `\n📅 นัดหมายใหม่!\nบริการ: ${service}${dateStr}${note ? `\nหมายเหตุ: ${note}` : ''}`;
+          await fetch('https://notify-api.line.me/api/notify', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ message: msg }),
+          });
+        }
+      } catch (e) { console.warn('[notify] bot-booking notify failed:', e.message); }
+    })();
+
+    res.json({ ok: true, bookingId, service, datetime });
+  } catch (err) {
+    console.error('[internal/bot-booking] error:', err);
     res.status(500).json({ error: err.message });
   }
 });

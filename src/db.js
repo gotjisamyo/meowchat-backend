@@ -455,6 +455,24 @@ async function initDatabase() {
   // Shop bot settings — slip verification mode per shop
   await db.exec(`ALTER TABLE products ADD COLUMN IF NOT EXISTS kb_entry_id TEXT`);
 
+  // Bookings table — appointments/reservations from LINE bot
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS bookings (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      customer_id TEXT,
+      line_user_id TEXT,
+      customer_name TEXT,
+      service TEXT NOT NULL,
+      booking_datetime TEXT,
+      status TEXT DEFAULT 'pending',
+      note TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_bookings_shop_id ON bookings(shop_id)`);
+
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS slip_verify_mode TEXT DEFAULT 'off'`);
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS quick_replies TEXT DEFAULT '[]'`);
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS welcome_message TEXT DEFAULT ''`);
