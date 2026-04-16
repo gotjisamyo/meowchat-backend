@@ -867,12 +867,54 @@ async function runSubscriptionStateMachine() {
   }
 }
 
-// Run all schedulers: startup delay then every 24h
+// Scheduled message delivery — runs every 5 minutes
+async function sendScheduledMessages() {
+  try {
+    const db = getDb();
+    if (!db) return;
+    const pending = await db.all(`
+      SELECT ms.*, s.line_access_token
+      FROM marketing_scheduled ms
+      JOIN shops s ON s.id = ms.shop_id
+      WHERE ms.status = 'pending'
+        AND ms.send_at <= NOW()
+        AND s.line_access_token IS NOT NULL
+      LIMIT 50
+    `);
+    for (const msg of pending) {
+      // Get customer's LINE user ID
+      const customer = await db.get('SELECT line_user_id FROM customers WHERE id = ?', [msg.customer_id]);
+      if (!customer?.line_user_id) {
+        await db.run(`UPDATE marketing_scheduled SET status = 'skipped', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [msg.id]);
+        continue;
+      }
+      try {
+        const resp = await fetch('https://api.line.me/v2/bot/message/push', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${msg.line_access_token}` },
+          body: JSON.stringify({ to: customer.line_user_id, messages: [{ type: 'text', text: msg.message }] }),
+        });
+        const status = resp.ok ? 'sent' : 'failed';
+        await db.run(`UPDATE marketing_scheduled SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [status, msg.id]);
+        if (resp.ok) console.log(`[scheduled-msg] sent id=${msg.id} shop=${msg.shop_id}`);
+        else console.warn(`[scheduled-msg] failed id=${msg.id} status=${resp.status}`);
+      } catch (e) {
+        await db.run(`UPDATE marketing_scheduled SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [msg.id]);
+      }
+    }
+  } catch (err) {
+    console.error('[scheduled-msg] error:', err.message);
+  }
+}
+
+// Run all schedulers: startup delay then every 24h (message delivery every 5min)
 setTimeout(() => {
   sendTrialReminders();
   sendDay3Notifications();
   sendWeeklySummary();
   runSubscriptionStateMachine();
+  sendScheduledMessages();
+  setInterval(sendScheduledMessages, 5 * 60 * 1000); // every 5 minutes
   setInterval(() => {
     sendTrialReminders();
     sendDay3Notifications();
