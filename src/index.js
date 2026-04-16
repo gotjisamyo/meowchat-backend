@@ -356,10 +356,38 @@ app.post('/api/internal/bot-order', async (req, res) => {
     }
 
     // Find or create customer record by lineUserId
-    const customer = await db.get(
+    let customer = await db.get(
       `SELECT * FROM customers WHERE shop_id = ? AND line_user_id = ? LIMIT 1`,
       [botId, lineUserId]
     );
+    if (!customer) {
+      // Auto-create customer if first interaction is an order
+      const custId = 'cust_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+      await db.run(
+        `INSERT INTO customers (id, shop_id, line_user_id, name, customer_group, status)
+         VALUES (?, ?, ?, ?, 'regular', 'active')`,
+        [custId, botId, lineUserId, `LINE ${lineUserId.slice(-6)}`]
+      ).catch(() => {});
+      customer = await db.get('SELECT * FROM customers WHERE id = ?', [custId]);
+      // Fire-and-forget: fetch LINE display name
+      (async () => {
+        try {
+          const shop = await db.get('SELECT line_access_token FROM shops WHERE id = ?', [botId]);
+          if (!shop?.line_access_token) return;
+          const profileRes = await fetch(`https://api.line.me/v2/bot/profile/${lineUserId}`, {
+            headers: { Authorization: `Bearer ${shop.line_access_token}` },
+          });
+          if (!profileRes.ok) return;
+          const profile = await profileRes.json();
+          if (profile.displayName) {
+            await db.run(
+              'UPDATE customers SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+              [profile.displayName, custId]
+            );
+          }
+        } catch { /* non-fatal */ }
+      })();
+    }
 
     const orderId = 'ord_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     const orderNumber = 'BOT-' + Date.now();
@@ -461,10 +489,19 @@ app.post('/api/internal/bot-booking', async (req, res) => {
     const { getDb } = require('./db');
     const db = await getDb();
 
-    const customer = await db.get(
+    let customer = await db.get(
       `SELECT * FROM customers WHERE shop_id = ? AND line_user_id = ? LIMIT 1`,
       [botId, lineUserId]
     );
+    if (!customer) {
+      const custId = 'cust_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+      await db.run(
+        `INSERT INTO customers (id, shop_id, line_user_id, name, customer_group, status)
+         VALUES (?, ?, ?, ?, 'regular', 'active')`,
+        [custId, botId, lineUserId, `LINE ${lineUserId.slice(-6)}`]
+      ).catch(() => {});
+      customer = await db.get('SELECT * FROM customers WHERE id = ?', [custId]);
+    }
 
     const bookingId = 'bk_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     const now = new Date().toISOString();
