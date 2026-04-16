@@ -178,6 +178,7 @@ const botsRouter = require('./routes/bots');
 const usageRouter = require('./routes/usage');
 app.use('/api/bots', authMiddleware, botsRouter);
 app.use('/api/usage', authMiddleware, usageRouter);
+app.use('/api/upload', authMiddleware, require('./routes/upload'));
 
 // Per-shop LINE webhooks: POST /api/line/webhook/:shopId
 // rawBody already captured above for /api/line/webhook/* prefix
