@@ -340,19 +340,24 @@ app.post('/api/internal/bot-order', async (req, res) => {
     const resolvedItems = [];
     let computedTotal = 0;
 
-    for (const { name, qty = 1 } of items) {
+    for (const { name, qty = 1, price: hintPrice } of items) {
       const quantity = Math.max(1, parseInt(qty) || 1);
       // Case-insensitive partial match
       const product = await db.get(
         `SELECT * FROM products WHERE shop_id = ? AND LOWER(name) LIKE LOWER(?) AND status = 'active' LIMIT 1`,
         [botId, `%${name}%`]
       );
-      if (!product) {
-        return res.status(422).json({ error: `ไม่พบสินค้า: ${name}`, item: name });
-      }
-      const price = Number(product.price) || 0;
+      // Fallback: if no product catalog match, create custom item so order still goes through
+      // Merchant can see it in dashboard and handle manually
+      const price = product ? Number(product.price) || 0 : Number(hintPrice) || 0;
       computedTotal += price * quantity;
-      resolvedItems.push({ productId: product.id, productName: product.name, quantity, price });
+      resolvedItems.push({
+        productId: product?.id ?? null,
+        productName: product?.name ?? name,
+        quantity,
+        price,
+        custom: !product, // flag so merchant knows this wasn't in catalog
+      });
     }
 
     // Find or create customer record by lineUserId
