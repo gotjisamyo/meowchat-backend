@@ -407,11 +407,12 @@ app.post('/api/internal/bot-order', async (req, res) => {
     }
 
     // Let PostgreSQL auto-generate id (SERIAL) — do not pass id explicitly
+    // "lineId" is a legacy NOT NULL column; pass lineUserId to satisfy constraint
     await db.run(
-      `INSERT INTO orders (shop_id, customer_id, order_number, status, items, total_amount, payment_method, note, created_at, updated_at)
-       VALUES (?, ?, ?, 'pending', ?, ?, 'bot', ?, ?, ?)`,
+      `INSERT INTO orders ("lineId", shop_id, customer_id, order_number, status, items, total_amount, payment_method, note, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'pending', ?, ?, 'bot', ?, ?, ?)`,
       [
-        botId, customer?.id ?? null, orderNumber,
+        lineUserId, botId, customer?.id ?? null, orderNumber,
         JSON.stringify(resolvedItems), computedTotal,
         note ?? '', now, now
       ]
