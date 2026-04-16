@@ -975,7 +975,23 @@ app.listen(PORT, () => {
 });
 
 initDatabase()
-  .then(() => { dbReady = true; })
+  .then(async () => {
+    dbReady = true;
+    // Promote ADMIN_EMAIL to admin role on startup (idempotent)
+    const adminEmail = process.env.ADMIN_EMAIL;
+    if (adminEmail) {
+      try {
+        const db = getDb();
+        const result = await db.run(
+          `UPDATE users SET role = 'admin' WHERE email = ? AND role != 'admin'`,
+          [adminEmail]
+        );
+        if (result.changes > 0) console.log(`[startup] promoted ${adminEmail} → admin`);
+      } catch (e) {
+        console.error('[startup] admin seed error:', e.message);
+      }
+    }
+  })
   .catch(err => {
     console.error('❌ DB init failed:', err.message || err.code || String(err));
     // Don't exit — let the process stay up so Railway doesn't loop-restart
