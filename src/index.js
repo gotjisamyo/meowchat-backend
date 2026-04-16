@@ -342,6 +342,29 @@ app.post('/api/internal/bot-order', async (req, res) => {
   }
 });
 
+// ─── Internal: Product Image Lookup ──────────────────────────────────────────
+app.get('/api/internal/product-image', async (req, res) => {
+  const key = req.headers['x-internal-key'];
+  if (!key || key !== process.env.INTERNAL_API_KEY) return res.status(401).json({ error: 'unauthorized' });
+
+  const { botId, name } = req.query;
+  if (!botId || !name) return res.status(400).json({ error: 'botId and name required' });
+
+  try {
+    const { getDb } = require('./db');
+    const db = getDb();
+    const product = await db.get(
+      `SELECT name, price, "imageUrl", description FROM products
+       WHERE shop_id = ? AND LOWER(name) LIKE LOWER(?) AND status = 'active' LIMIT 1`,
+      [botId, `%${name}%`]
+    );
+    if (!product) return res.status(404).json({ error: 'not found' });
+    res.json(product);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Internal: Bot Booking Creation ──────────────────────────────────────────
 app.post('/api/internal/bot-booking', async (req, res) => {
   const key = req.headers['x-internal-key'];
