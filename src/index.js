@@ -178,8 +178,9 @@ const botsRouter = require('./routes/bots');
 const usageRouter = require('./routes/usage');
 app.use('/api/bots', authMiddleware, botsRouter);
 app.use('/api/usage', authMiddleware, usageRouter);
-app.use('/api/upload/serve', require('./routes/upload')); // public — serve stored images
-app.use('/api/upload', authMiddleware, require('./routes/upload')); // POST needs auth
+const { publicRouter: uploadPublic, authRouter: uploadAuth } = require('./routes/upload');
+app.use('/api/upload/serve', uploadPublic);           // public — no auth
+app.use('/api/upload', authMiddleware, uploadAuth);   // POST /image — needs auth
 
 // Per-shop LINE webhooks: POST /api/line/webhook/:shopId
 // rawBody already captured above for /api/line/webhook/* prefix
