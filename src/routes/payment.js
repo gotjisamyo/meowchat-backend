@@ -209,6 +209,17 @@ router.post('/notify', authMiddleware, async (req, res) => {
       },
       message: 'บันทึกการแจ้งโอนเรียบร้อยแล้ว'
     });
+
+    // Notify admin via LINE Notify (fire-and-forget)
+    const adminToken = process.env.ADMIN_LINE_NOTIFY_TOKEN;
+    if (adminToken) {
+      const msg = `\n💰 แจ้งโอนใหม่!\nร้าน: ${normalizedShopId}\nชื่อ: ${normalizedPayerName}\nจำนวน: ฿${parsedAmount.toLocaleString()}\nวันที่โอน: ${transferDate}\n\n👉 app.meowchat.store → Finance → อนุมัติ`;
+      fetch('https://notify-api.line.me/api/notify', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ message: msg }),
+      }).catch(() => {});
+    }
   } catch (error) {
     console.error('payment notify error:', error);
     res.status(500).json({ success: false, error: error.message });
