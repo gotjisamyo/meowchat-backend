@@ -82,7 +82,7 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, price, stock, imageUrl, category, status } = req.body;
+    const { name, description, price, stock, imageUrl, category, status, kb_entry_id } = req.body;
     const db = getDb();
 
     const existingProduct = await getOwnedProduct(db, req.userId, id);
@@ -100,6 +100,7 @@ router.put('/:id', async (req, res) => {
     if (imageUrl !== undefined) { fields.push('"imageUrl" = ?'); values.push(stripHtml(imageUrl)); }
     if (category !== undefined) { fields.push('category = ?'); values.push(stripHtml(category)); }
     if (status !== undefined) { fields.push('status = ?'); values.push(status); }
+    if (kb_entry_id !== undefined) { fields.push('kb_entry_id = ?'); values.push(kb_entry_id); }
 
     if (fields.length === 0) {
       return res.status(400).json({ error: 'No fields to update' });

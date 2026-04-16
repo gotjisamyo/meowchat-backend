@@ -453,6 +453,8 @@ async function initDatabase() {
   await db.exec(`CREATE INDEX IF NOT EXISTS idx_merchant_credits_shop ON merchant_credits(shop_id)`);
 
   // Shop bot settings — slip verification mode per shop
+  await db.exec(`ALTER TABLE products ADD COLUMN IF NOT EXISTS kb_entry_id TEXT`);
+
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS slip_verify_mode TEXT DEFAULT 'off'`);
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS quick_replies TEXT DEFAULT '[]'`);
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS welcome_message TEXT DEFAULT ''`);
