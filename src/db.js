@@ -423,6 +423,7 @@ async function initDatabase() {
     )
   `);
   await db.exec(`CREATE INDEX IF NOT EXISTS idx_broadcasts_shop_id ON broadcasts(shop_id)`);
+  await db.exec(`ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS image_url TEXT`);
 
   // Credit packs — predefined top-up bundles
   await db.exec(`

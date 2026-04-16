@@ -737,7 +737,7 @@ router.post('/:botId/broadcast', async (req, res) => {
     const shop = await db.get('SELECT * FROM shops WHERE id = ? AND user_id = ?', [req.params.botId, req.userId]);
     if (!shop) return res.status(404).json({ error: 'Not found' });
 
-    const { message } = req.body;
+    const { message, imageUrl } = req.body;
     if (!message?.trim()) return res.status(400).json({ error: 'message required' });
     if (message.length > 2000) return res.status(400).json({ error: 'message must be ≤ 2000 chars (LINE limit)' });
 
@@ -750,8 +750,8 @@ router.post('/:botId/broadcast', async (req, res) => {
 
     // Create broadcast record
     const result = await db.run(
-      `INSERT INTO broadcasts (shop_id, message, recipient_count, status) VALUES (?, ?, ?, 'sending') RETURNING id`,
-      [req.params.botId, message.trim(), userIds.length]
+      `INSERT INTO broadcasts (shop_id, message, image_url, recipient_count, status) VALUES (?, ?, ?, ?, 'sending') RETURNING id`,
+      [req.params.botId, message.trim(), imageUrl || null, userIds.length]
     );
     const broadcastId = result.lastInsertRowid;
 
@@ -764,6 +764,16 @@ router.post('/:botId/broadcast', async (req, res) => {
       return;
     }
 
+    // Build LINE messages array — text always first, image appended if provided
+    const lineMessages = [{ type: 'text', text: message.trim() }];
+    if (imageUrl) {
+      lineMessages.push({
+        type: 'image',
+        originalContentUrl: imageUrl,
+        previewImageUrl: imageUrl,
+      });
+    }
+
     let sentCount = 0;
     const BATCH = 500;
     for (let i = 0; i < userIds.length; i += BATCH) {
@@ -772,7 +782,7 @@ router.post('/:botId/broadcast', async (req, res) => {
         const resp = await fetch('https://api.line.me/v2/bot/message/multicast', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-          body: JSON.stringify({ to: batch, messages: [{ type: 'text', text: message.trim() }] }),
+          body: JSON.stringify({ to: batch, messages: lineMessages }),
         });
         if (resp.ok) {
           sentCount += batch.length;
