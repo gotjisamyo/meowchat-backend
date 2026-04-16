@@ -159,7 +159,7 @@ router.post('/notify', authMiddleware, async (req, res) => {
     }
 
     const db = getDb();
-    const shop = await db.get('SELECT id FROM shops WHERE id = ? AND user_id = ?', [String(shopId).trim(), req.userId]);
+    const shop = await db.get('SELECT id, name FROM shops WHERE id = ? AND user_id = ?', [String(shopId).trim(), req.userId]);
     if (!shop) {
       return res.status(404).json({ success: false, error: 'shopId is invalid' });
     }
@@ -219,7 +219,7 @@ router.post('/notify', authMiddleware, async (req, res) => {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${channelToken}` },
         body: JSON.stringify({
           to: adminUserId,
-          messages: [{ type: 'text', text: `💰 สลิปใหม่!\nร้าน: ${normalizedShopId}\nชื่อ: ${normalizedPayerName}\nจำนวน: ฿${parsedAmount.toLocaleString()}\n\n👉 app.meowchat.store` }],
+          messages: [{ type: 'text', text: `💰 สลิปใหม่!\nร้าน: ${shop.name}\nชื่อ: ${normalizedPayerName}\nจำนวน: ฿${parsedAmount.toLocaleString()}\n\n👉 app.meowchat.store` }],
         }),
       }).catch(() => {});
     }
