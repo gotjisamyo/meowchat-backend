@@ -646,38 +646,107 @@ router.get('/analytics/revenue', async (_req, res) => {
   }
 });
 
-// GET /api/admin/analytics/finance — MRR and financial summary
+// GET /api/admin/analytics/finance — MRR and financial summary with real expenses
 router.get('/analytics/finance', async (_req, res) => {
   try {
     const db = getDb();
-    const [mrrRow, totalRow, countRow] = await Promise.all([
+    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+
+    const [mrrRow, revenueRow, countRow, expenseRows, paymentRow] = await Promise.all([
       db.get(`
-        SELECT SUM(p.price) AS mrr
+        SELECT COALESCE(SUM(p.price), 0) AS mrr
         FROM subscriptions s
         JOIN plans p ON p.id = s.plan_id
         WHERE s.status = 'active'
-      `).catch(() => null),
+      `).catch(() => ({ mrr: 0 })),
       db.get(`
-        SELECT SUM(p.price) AS total
-        FROM subscriptions s
-        JOIN plans p ON p.id = s.plan_id
-        WHERE s.status = 'active'
-          AND s."createdAt" >= DATE_TRUNC('year', NOW())
-      `).catch(() => null),
-      db.get(`SELECT COUNT(*) AS cnt FROM subscriptions WHERE status = 'active'`).catch(() => null),
+        SELECT COALESCE(SUM(amount), 0) AS total
+        FROM payment_notifications
+        WHERE status = 'approved'
+          AND DATE_TRUNC('year', created_at) = DATE_TRUNC('year', NOW())
+      `).catch(() => ({ total: 0 })),
+      db.get(`SELECT COUNT(*) AS cnt FROM subscriptions WHERE status = 'active'`).catch(() => ({ cnt: 0 })),
+      db.all(`SELECT category, amount, note FROM admin_expenses WHERE month = ?`, [currentMonth]).catch(() => []),
+      db.get(`
+        SELECT COALESCE(SUM(amount), 0) AS total
+        FROM payment_notifications WHERE status = 'approved'
+      `).catch(() => ({ total: 0 })),
     ]);
+
     const mrr = Number(mrrRow?.mrr || 0);
     const arr = mrr * 12;
-    const estimatedCost = Math.round(mrr * 0.35);
+    const totalRevenue = Number(paymentRow?.total || 0) || Number(revenueRow?.total || 0);
+
+    // Use real expenses if any, else estimate at 35% of MRR
+    const hasRealExpenses = expenseRows.length > 0;
+    const totalCost = hasRealExpenses
+      ? expenseRows.reduce((sum, r) => sum + Number(r.amount), 0)
+      : Math.round(mrr * 0.35);
+
+    const netProfit = totalRevenue - totalCost;
+    const profitMargin = totalRevenue > 0
+      ? Math.round((netProfit / totalRevenue) * 100 * 10) / 10
+      : 0;
+
+    // Default expense categories if none set
+    const expenses = hasRealExpenses
+      ? expenseRows.map(r => ({ category: r.category, amount: Number(r.amount), note: r.note ?? '' }))
+      : [
+          { category: 'เซิร์ฟเวอร์ (Railway)', amount: 0, note: '' },
+          { category: 'AI API (Gemini)', amount: 0, note: '' },
+          { category: 'การตลาด', amount: 0, note: '' },
+          { category: 'อื่นๆ', amount: 0, note: '' },
+        ];
+
     res.json({
-      totalRevenue: Number(totalRow?.total || 0),
+      totalRevenue,
       mrr,
       arr,
-      totalCost: estimatedCost,
-      netProfit: mrr - estimatedCost,
-      profitMargin: mrr > 0 ? Math.round(((mrr - estimatedCost) / mrr) * 100 * 10) / 10 : 0,
+      totalCost,
+      netProfit,
+      profitMargin,
       activeSubscriptions: Number(countRow?.cnt || 0),
+      expenses,
+      currentMonth,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/expenses — list expenses for a month
+router.get('/expenses', async (req, res) => {
+  try {
+    const db = getDb();
+    const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const rows = await db.all(
+      `SELECT id, category, amount, note, month FROM admin_expenses WHERE month = ? ORDER BY category ASC`,
+      [month]
+    );
+    res.json({ expenses: rows, month });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/admin/expenses — upsert expense entry
+router.put('/expenses', async (req, res) => {
+  try {
+    const { category, amount, month, note } = req.body;
+    if (!category || amount == null || !month) {
+      return res.status(400).json({ error: 'category, amount and month are required' });
+    }
+    const db = getDb();
+    await db.run(
+      `INSERT INTO admin_expenses (category, amount, month, note, updated_at)
+       VALUES (?, ?, ?, ?, NOW())
+       ON CONFLICT (category, month) DO UPDATE
+         SET amount = excluded.amount,
+             note = excluded.note,
+             updated_at = NOW()`,
+      [category, Number(amount), month, note ?? '']
+    );
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -566,6 +566,20 @@ async function initDatabase() {
   await db.exec(`CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at)`);
   await db.exec(`CREATE INDEX IF NOT EXISTS idx_request_logs_path ON request_logs(path)`);
 
+  // Admin expenses — monthly cost tracking per category
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS admin_expenses (
+      id SERIAL PRIMARY KEY,
+      category TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      month TEXT NOT NULL,
+      note TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(category, month)
+    )
+  `);
+
   // Create indexes for performance
   await db.exec(`
     CREATE INDEX IF NOT EXISTS idx_shops_user_id ON shops(user_id);
