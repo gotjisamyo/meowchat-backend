@@ -174,24 +174,71 @@ router.post('/broadcast', async (req, res) => {
     if (!await requireOwnedShop(req, res, shopId)) return;
 
     const db = getDb();
-    let query = "SELECT id FROM customers WHERE shop_id = ? AND status = 'active'";
-    const params = [req.shopId];
 
+    // Get shop's LINE access token
+    const shop = await db.get('SELECT line_access_token FROM shops WHERE id = ?', [req.shopId]);
+    const lineToken = shop?.line_access_token;
+
+    let query = "SELECT id, line_user_id FROM customers WHERE shop_id = ? AND status = 'active'";
+    const params = [req.shopId];
     if (filter?.group) {
       query += ' AND customer_group = ?';
       params.push(filter.group);
     }
 
     const customers = await db.all(query, params);
+    let sent = 0, failed = 0, skipped = 0;
 
     for (const customer of customers) {
-      await db.run(`
-        INSERT INTO marketing_scheduled (shop_id, customer_id, message, send_at, channel, status)
-        VALUES (?, ?, ?, NOW(), 'line', 'pending')
-      `, [req.shopId, customer.id, message]);
+      if (!customer.line_user_id || !lineToken) {
+        skipped++;
+        await db.run(
+          `INSERT INTO marketing_scheduled (shop_id, customer_id, message, send_at, channel, status)
+           VALUES (?, ?, ?, CURRENT_TIMESTAMP, 'line', 'skipped')`,
+          [req.shopId, customer.id, message]
+        );
+        continue;
+      }
+
+      try {
+        const lineRes = await fetch('https://api.line.me/v2/bot/message/push', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${lineToken}`,
+          },
+          body: JSON.stringify({
+            to: customer.line_user_id,
+            messages: [{ type: 'text', text: message }],
+          }),
+        });
+
+        const status = lineRes.ok ? 'sent' : 'failed';
+        if (lineRes.ok) sent++; else failed++;
+
+        await db.run(
+          `INSERT INTO marketing_scheduled (shop_id, customer_id, message, send_at, channel, status)
+           VALUES (?, ?, ?, CURRENT_TIMESTAMP, 'line', ?)`,
+          [req.shopId, customer.id, message, status]
+        );
+      } catch {
+        failed++;
+        await db.run(
+          `INSERT INTO marketing_scheduled (shop_id, customer_id, message, send_at, channel, status)
+           VALUES (?, ?, ?, CURRENT_TIMESTAMP, 'line', 'failed')`,
+          [req.shopId, customer.id, message]
+        );
+      }
     }
 
-    res.json({ success: true, count: customers.length, message: `ส่งถึง ${customers.length} คนแล้วค่ะ!` });
+    res.json({
+      success: true,
+      sent,
+      failed,
+      skipped,
+      count: customers.length,
+      message: `ส่งสำเร็จ ${sent} คน${failed > 0 ? ` · ล้มเหลว ${failed} คน` : ''}${skipped > 0 ? ` · ข้าม ${skipped} คน (ไม่มี LINE)` : ''}`,
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
