@@ -112,7 +112,9 @@ function buildBotConfig(shop, products, knowledgeBase) {
       id: `kb-${i}`,
       topic: k.topic,
       content: k.content,
-      keywords: [k.topic],
+      keywords: typeof k.keywords === 'string'
+        ? JSON.parse(k.keywords || '[]')
+        : (Array.isArray(k.keywords) ? k.keywords : [k.topic]),
     })),
   ];
 
@@ -327,7 +329,7 @@ router.post('/:shopId', async (req, res) => {
       [shopId]
     ).catch(() => []),
     db.all(
-      `SELECT topic, content FROM bot_knowledge WHERE shop_id = ? ORDER BY "createdAt" ASC LIMIT 10`,
+      `SELECT topic, content, keywords FROM bot_knowledge WHERE shop_id = ? ORDER BY "createdAt" ASC LIMIT 10`,
       [shopId]
     ).catch(() => [])
   ]);
