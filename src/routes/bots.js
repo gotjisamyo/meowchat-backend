@@ -490,17 +490,16 @@ router.get('/:botId/handoffs', async (req, res) => {
       return res.status(404).json({ error: 'Bot not found', message: 'ไม่พบ bot' });
     }
 
-    const statusFilter = status || 'pending';
     const handoffs = await db.all(`
       SELECT h.id, h.shop_id, h.line_user_id, h.customer_name, h.message,
              h.status, h.resolved_at, h.created_at, h.updated_at
       FROM handoffs h
-      WHERE h.shop_id = ? AND h.status = ?
+      WHERE h.shop_id = ? AND h.status IN ('pending', 'accepted')
       ORDER BY h.created_at DESC
       LIMIT 50
-    `, [botId, statusFilter]);
+    `, [botId]);
 
-    res.json({ handoffs, botId, status: statusFilter });
+    res.json({ handoffs, botId });
   } catch (error) {
     console.error('Get handoffs error:', error);
     res.status(500).json({ error: 'Server error', message: 'เกิดข้อผิดพลาด' });

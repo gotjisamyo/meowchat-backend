@@ -282,8 +282,22 @@ app.post('/api/internal/log', async (req, res) => {
       })();
     }
 
-    // Send LINE Notify to merchant when newly escalated
+    // Create handoff record + notify when newly escalated
     if (escalated && !wasEscalated) {
+      // Look up customer name for the handoff card
+      const customer = await db.get(
+        'SELECT name FROM customers WHERE shop_id = ? AND line_user_id = ? LIMIT 1',
+        [botId, lineUserId]
+      ).catch(() => null);
+      const customerName = customer?.name || lineUserId;
+
+      const handoffId = 'hdo_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
+      await db.run(
+        `INSERT OR IGNORE INTO handoffs (id, shop_id, line_user_id, customer_name, message, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [handoffId, botId, lineUserId, customerName, userText || '']
+      ).catch(e => console.warn('[handoff] insert failed:', e.message));
+
       sendLineNotify(db, botId, lineUserId, userText).catch(e =>
         console.warn('[notify] LINE Notify failed:', e)
       );

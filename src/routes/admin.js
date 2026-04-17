@@ -254,14 +254,27 @@ router.post('/payments/:id/approve', async (req, res) => {
     if (payment.shop_id) {
       const paidUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
-      // Resolve plan_id from payment amount (find closest plan by price, fallback to Starter id=2)
+      // Resolve plan_id from payment amount — exact match first, then closest price within ±100
       let resolvedPlanId = 2;
       if (payment.amount) {
-        const matchedPlan = await db.get(
+        const exactPlan = await db.get(
           `SELECT id FROM plans WHERE price = ? AND is_active = TRUE ORDER BY id LIMIT 1`,
           [payment.amount]
         );
-        if (matchedPlan) resolvedPlanId = matchedPlan.id;
+        if (exactPlan) {
+          resolvedPlanId = exactPlan.id;
+        } else {
+          const closestPlan = await db.get(
+            `SELECT id, price FROM plans WHERE is_active = TRUE AND ABS(price - ?) <= 100 ORDER BY ABS(price - ?) LIMIT 1`,
+            [payment.amount, payment.amount]
+          );
+          if (closestPlan) {
+            console.log(`[admin] payment amount ฿${payment.amount} → closest plan id=${closestPlan.id} price=฿${closestPlan.price}`);
+            resolvedPlanId = closestPlan.id;
+          } else {
+            console.warn(`[admin] payment amount ฿${payment.amount} — no matching plan found, defaulting to plan id=2`);
+          }
+        }
       }
 
       await db.run(
@@ -317,6 +330,19 @@ router.post('/payments/:id/approve', async (req, res) => {
     }
 
     const updatedPayment = await db.get('SELECT * FROM payment_notifications WHERE id = ?', [req.params.id]);
+
+    // Notify merchant via LINE Notify (fire-and-forget)
+    if (payment.shop_id) {
+      const shop = await db.get('SELECT name, line_notify_token FROM shops WHERE id = ?', [payment.shop_id]);
+      if (shop?.line_notify_token) {
+        const msg = `\n✅ ยืนยันการชำระเงินแล้ว!\nร้าน: ${shop.name}\nยอด: ฿${Number(payment.amount).toLocaleString()}\n\nบอทของคุณพร้อมใช้งานแล้ว 🐱\n👉 my.meowchat.store`;
+        fetch('https://notify-api.line.me/api/notify', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ message: msg }),
+        }).catch(() => {});
+      }
+    }
 
     res.json({ message: 'อนุมัติการแจ้งโอนเรียบร้อยแล้ว', payment: updatedPayment });
   } catch (error) {
