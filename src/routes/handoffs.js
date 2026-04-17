@@ -41,6 +41,17 @@ router.patch('/:id', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, error: 'invalid status' });
     }
     const db = getDb();
+
+    if (req.user?.role !== 'admin') {
+      const owned = await db.get(
+        `SELECT h.id FROM handoffs h
+         JOIN shops s ON s.id = h.shop_id
+         WHERE h.id = ? AND s.user_id = ?`,
+        [req.params.id, req.userId]
+      );
+      if (!owned) return res.status(403).json({ success: false, error: 'forbidden' });
+    }
+
     const resolvedAt = status === 'resolved' ? new Date().toISOString() : null;
     await db.run(
       `UPDATE handoffs SET status = ?, resolved_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,

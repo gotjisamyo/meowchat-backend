@@ -260,8 +260,8 @@ router.put('/profile', authMiddleware, async (req, res) => {
     // Handle password change with verification (currentPassword + newPassword)
     const targetPassword = newPassword || password;
     if (targetPassword) {
-      if (targetPassword.length < 6) {
-        return res.status(400).json({ error: 'Password too short', message: 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร' });
+      if (targetPassword.length < 8) {
+        return res.status(400).json({ error: 'Password too short', message: 'รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร' });
       }
       // Require currentPassword when changing via newPassword (security)
       if (newPassword) {

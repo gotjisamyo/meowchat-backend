@@ -423,7 +423,7 @@ app.post('/api/internal/bot-order', async (req, res) => {
       );
       if (inv) {
         await db.run(
-          'UPDATE inventory SET quantity = MAX(0, quantity - ?), updated_at = ? WHERE id = ?',
+          'UPDATE inventory SET quantity = GREATEST(0, quantity - ?), updated_at = ? WHERE id = ?',
           [ri.quantity, now, inv.id]
         );
       }

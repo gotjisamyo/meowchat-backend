@@ -24,7 +24,7 @@ async function replyToLine(replyToken, text, accessToken) {
     'https://api.line.me/v2/bot/message/reply',
     { replyToken, messages: [{ type: 'text', text }] },
     { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` } }
-  );
+  ).catch(err => console.error('[LINE reply error]', err.response?.data || err.message));
 }
 
 async function pushToLine(userId, text, accessToken) {
