@@ -222,13 +222,31 @@ async function processEvent(event, shop, products, knowledgeBase) {
   if (escalated) {
     reply = `ขอโทษที่ทำให้ไม่สะดวกนะคะ ทางร้านจะให้ทีมงานติดต่อกลับโดยเร็วที่สุดนะคะ ขอบคุณที่รอค่ะ 🙏`;
 
-    // Save handoff record
+    // Look up customer name: DB first, then LINE profile API, then userId fallback
     const db = getDb();
+    let customerName = null;
+    const existing = await db.get(
+      'SELECT name FROM customers WHERE shop_id = ? AND line_user_id = ? LIMIT 1',
+      [shop.id, userId]
+    ).catch(() => null);
+    if (existing?.name) {
+      customerName = existing.name;
+    } else if (shop.line_access_token) {
+      try {
+        const profile = await axios.get(`https://api.line.me/v2/profile/${userId}`, {
+          headers: { Authorization: `Bearer ${shop.line_access_token}` },
+          timeout: 3000,
+        });
+        customerName = profile.data.displayName || null;
+      } catch {}
+    }
+
+    // Save handoff record
     const handoffId = crypto.randomUUID();
     await db.run(
-      `INSERT INTO handoffs (id, shop_id, line_user_id, message, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      [handoffId, shop.id, userId, userText]
+      `INSERT INTO handoffs (id, shop_id, line_user_id, customer_name, message, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [handoffId, shop.id, userId, customerName, userText]
     ).catch(e => console.error('[handoff save error]', e.message));
 
     // Push LINE notification to admin (Got)
@@ -237,7 +255,7 @@ async function processEvent(event, shop, products, knowledgeBase) {
     if (adminUserId && channelToken) {
       pushToLine(
         adminUserId,
-        `🔔 ลูกค้าต้องการคุยกับคน!\nร้าน: ${shop.name}\nข้อความ: "${userText}"\n\n👉 app.meowchat.store`,
+        `🔔 ลูกค้าต้องการคุยกับคน!\nร้าน: ${shop.name}\nลูกค้า: ${customerName || userId}\nข้อความ: "${userText}"\n\n👉 app.meowchat.store`,
         channelToken
       );
     }
