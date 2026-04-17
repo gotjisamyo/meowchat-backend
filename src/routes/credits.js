@@ -126,7 +126,7 @@ router.post('/purchase/:shopId', requireOwnedShop, async (req, res) => {
     if (!pack) return res.status(404).json({ error: 'pack not found' });
 
     // Generate unique reference number for this purchase
-    const refNumber = `CR-${Date.now()}-${shopId.slice(-6)}`;
+    const refNumber = `CR-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
     const paymentResult = await db.run(
       `INSERT INTO payment_notifications

@@ -244,11 +244,15 @@ router.post('/payments/:id/approve', async (req, res) => {
       return res.status(409).json({ error: 'Payment already processed', message: `รายการนี้ถูกดำเนินการแล้ว (${payment.status})` });
     }
 
-    await db.run(`
+    const approveResult = await db.run(`
       UPDATE payment_notifications
       SET status = 'approved', updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
+      WHERE id = ? AND status = 'pending'
     `, [req.params.id]);
+
+    if (approveResult.changes === 0) {
+      return res.status(409).json({ error: 'Payment already processed', message: 'รายการนี้ถูกดำเนินการแล้ว' });
+    }
 
     // Unlock bot and activate subscription for the shop
     if (payment.shop_id) {
@@ -416,11 +420,15 @@ router.post('/payments/:id/reject', async (req, res) => {
       return res.status(409).json({ error: 'Payment already processed', message: `รายการนี้ถูกดำเนินการแล้ว (${payment.status})` });
     }
 
-    await db.run(`
+    const rejectResult = await db.run(`
       UPDATE payment_notifications
       SET status = 'rejected', updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
+      WHERE id = ? AND status = 'pending'
     `, [req.params.id]);
+
+    if (rejectResult.changes === 0) {
+      return res.status(409).json({ error: 'Payment already processed', message: 'รายการนี้ถูกดำเนินการแล้ว' });
+    }
 
     const updatedPayment = await db.get('SELECT * FROM payment_notifications WHERE id = ?', [req.params.id]);
 
