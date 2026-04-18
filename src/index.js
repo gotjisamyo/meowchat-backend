@@ -324,6 +324,7 @@ app.post('/api/internal/slip-order', async (req, res) => {
     const { getDb } = require('./db');
     const db = await getDb();
     const status = mode === 'auto' ? 'approved' : 'pending';
+    const shop = await db.get('SELECT name FROM shops WHERE id = ?', [botId]);
     await db.run(
       `INSERT INTO payment_notifications
          (shop_id, payer_name, amount, transfer_date, bank_name, account_name, account_number, ref_number, status)
@@ -331,6 +332,23 @@ app.post('/api/internal/slip-order', async (req, res) => {
       [botId, lineUserId, amount ?? 0, date ?? new Date().toISOString().slice(0,10), bankName ?? '-', refNumber ?? null, status]
     );
     res.json({ ok: true, status });
+
+    // Push LINE notification to admin (fire-and-forget)
+    const adminUserId = process.env.ADMIN_LINE_USER_ID;
+    const channelToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+    if (adminUserId && channelToken) {
+      const shopName = shop?.name || botId;
+      const amountText = amount ? `฿${Number(amount).toLocaleString()}` : 'ไม่ทราบจำนวน';
+      const statusText = mode === 'auto' ? '✅ อนุมัติอัตโนมัติ' : '⏳ รอตรวจสอบ';
+      fetch('https://api.line.me/v2/bot/message/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${channelToken}` },
+        body: JSON.stringify({
+          to: adminUserId,
+          messages: [{ type: 'text', text: `💰 สลิปใหม่!\nร้าน: ${shopName}\nจำนวน: ${amountText}\nสถานะ: ${statusText}\n\n👉 app.meowchat.store` }],
+        }),
+      }).catch(() => {});
+    }
   } catch (err) {
     console.error('[internal/slip-order] error:', err);
     res.status(500).json({ error: err.message });
