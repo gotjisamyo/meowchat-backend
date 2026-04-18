@@ -335,17 +335,9 @@ router.post('/payments/:id/approve', async (req, res) => {
 
     const updatedPayment = await db.get('SELECT * FROM payment_notifications WHERE id = ?', [req.params.id]);
 
-    // Notify merchant via LINE Notify (fire-and-forget)
     if (payment.shop_id) {
-      const shop = await db.get('SELECT name, line_notify_token FROM shops WHERE id = ?', [payment.shop_id]);
-      if (shop?.line_notify_token) {
-        const msg = `\n✅ ยืนยันการชำระเงินแล้ว!\nร้าน: ${shop.name}\nยอด: ฿${Number(payment.amount).toLocaleString()}\n\nบอทของคุณพร้อมใช้งานแล้ว 🐱\n👉 my.meowchat.store`;
-        fetch('https://notify-api.line.me/api/notify', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ message: msg }),
-        }).catch(() => {});
-      }
+      const shop = await db.get('SELECT name FROM shops WHERE id = ?', [payment.shop_id]);
+      console.log(`[admin] payment approved for shop=${shop?.name || payment.shop_id} amount=฿${Number(payment.amount).toLocaleString()}`);
     }
 
     res.json({ message: 'อนุมัติการแจ้งโอนเรียบร้อยแล้ว', payment: updatedPayment });

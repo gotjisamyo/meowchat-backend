@@ -293,14 +293,13 @@ app.post('/api/internal/log', async (req, res) => {
 
       const handoffId = 'hdo_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
       await db.run(
-        `INSERT OR IGNORE INTO handoffs (id, shop_id, line_user_id, customer_name, message, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        `INSERT INTO handoffs (id, shop_id, line_user_id, customer_name, message, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON CONFLICT (id) DO NOTHING`,
         [handoffId, botId, lineUserId, customerName, userText || '']
       ).catch(e => console.warn('[handoff] insert failed:', e.message));
 
-      sendLineNotify(db, botId, lineUserId, userText).catch(e =>
-        console.warn('[notify] LINE Notify failed:', e)
-      );
+      pushAdminNotify(`🔔 ลูกค้าขอคุยกับพนักงาน!\nร้าน: ${botId}\nลูกค้า: ${customerName}\nข้อความ: "${userText || ''}"\n\n👉 app.meowchat.store`).catch(() => {});
     }
 
     res.json({ ok: true, conversationId: conv.id });
@@ -473,19 +472,11 @@ app.post('/api/internal/bot-order', async (req, res) => {
       );
     }
 
-    // LINE Notify to merchant — fire-and-forget, don't block response
     (async () => {
       try {
-        const shop = await db.get('SELECT line_notify_token, name FROM shops WHERE id = ?', [botId]);
-        if (shop?.line_notify_token) {
-          const itemLines = resolvedItems.map(i => `• ${i.productName} x${i.quantity} ฿${(i.price * i.quantity).toLocaleString()}`).join('\n');
-          const msg = `\n🛒 ออเดอร์ใหม่ ${orderNumber}\nยอดรวม: ฿${computedTotal.toLocaleString()}\n${itemLines}${note ? `\nหมายเหตุ: ${note}` : ''}`;
-          await fetch('https://notify-api.line.me/api/notify', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({ message: msg }),
-          });
-        }
+        const shop = await db.get('SELECT name FROM shops WHERE id = ?', [botId]);
+        const itemLines = resolvedItems.map(i => `• ${i.productName} x${i.quantity} ฿${(i.price * i.quantity).toLocaleString()}`).join('\n');
+        await pushAdminNotify(`🛒 ออเดอร์ใหม่ ${orderNumber}\nร้าน: ${shop?.name || botId}\nยอดรวม: ฿${computedTotal.toLocaleString()}\n${itemLines}${note ? `\nหมายเหตุ: ${note}` : ''}`);
       } catch (e) { console.warn('[notify] bot-order notify failed:', e.message); }
     })();
 
@@ -558,19 +549,11 @@ app.post('/api/internal/bot-booking', async (req, res) => {
       [bookingId, botId, customer?.id ?? null, lineUserId, customer?.name ?? 'ลูกค้า', service, datetime ?? null, note ?? '', now, now]
     );
 
-    // LINE Notify to merchant — fire-and-forget
     (async () => {
       try {
-        const shop = await db.get('SELECT line_notify_token FROM shops WHERE id = ?', [botId]);
-        if (shop?.line_notify_token) {
-          const dateStr = datetime ? `\nวันเวลา: ${datetime}` : '';
-          const msg = `\n📅 นัดหมายใหม่!\nบริการ: ${service}${dateStr}${note ? `\nหมายเหตุ: ${note}` : ''}`;
-          await fetch('https://notify-api.line.me/api/notify', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({ message: msg }),
-          });
-        }
+        const shop = await db.get('SELECT name FROM shops WHERE id = ?', [botId]);
+        const dateStr = datetime ? `\nวันเวลา: ${datetime}` : '';
+        await pushAdminNotify(`📅 นัดหมายใหม่!\nร้าน: ${shop?.name || botId}\nบริการ: ${service}${dateStr}${note ? `\nหมายเหตุ: ${note}` : ''}`);
       } catch (e) { console.warn('[notify] bot-booking notify failed:', e.message); }
     })();
 
@@ -747,127 +730,44 @@ app.get('/api/bots/:botId/analytics/overview', authMiddleware, async (req, res) 
   }
 });
 
-async function sendLineNotify(db, shopId, lineUserId, lastMessage) {
-  const shop = await db.get('SELECT line_notify_token FROM shops WHERE id = ?', [shopId]);
-  const token = shop?.line_notify_token;
-  if (!token) return;
-  const text = `\n🔔 ลูกค้าขอคุยกับพนักงาน!\nLine ID: ${lineUserId}\nข้อความล่าสุด: "${lastMessage || ''}"`;
-  await fetch('https://notify-api.line.me/api/notify', {
+async function pushAdminNotify(text) {
+  const adminUserId = process.env.ADMIN_LINE_USER_ID;
+  const channelToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  if (!adminUserId || !channelToken) return;
+  await fetch('https://api.line.me/v2/bot/message/push', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ message: text }),
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${channelToken}` },
+    body: JSON.stringify({ to: adminUserId, messages: [{ type: 'text', text }] }),
   });
-  console.log(`[notify] LINE Notify sent for shop=${shopId}`);
+  console.log('[notify] admin push sent');
 }
 
-// Trial Day-10 Reminder — runs every 24h, sends LINE Notify to shops expiring in 4 days
 async function sendTrialReminders() {
   try {
     const db = getDb();
     if (!db) return;
-    // Find shops where trial ends in 3–5 days (catches day 10 of 14-day trial)
     const shops = await db.all(`
-      SELECT s.id, s.name, s.line_notify_token
+      SELECT s.id, s.name
       FROM shops s
       WHERE s.trial_ends_at IS NOT NULL
         AND s.trial_reminder_sent = FALSE
         AND s.trial_ends_at BETWEEN NOW() + INTERVAL '3 days' AND NOW() + INTERVAL '5 days'
     `);
     for (const shop of shops) {
-      if (!shop.line_notify_token) continue;
-      const daysLeft = 4;
-      const msg = `\n⏰ ทดลองใช้ MeowChat เหลืออีก ${daysLeft} วัน!\n\nบอทของคุณตอบลูกค้าให้คุณทุกวัน อย่าให้มันหยุดทำงาน\n\n👉 Upgrade ที่ my.meowchat.store/subscription\n✅ Starter ฿490/เดือน — คุ้มกว่าจ้างพนักงานตอบ LINE`;
-      try {
-        await fetch('https://notify-api.line.me/api/notify', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ message: msg }),
-        });
-        await db.run(`UPDATE shops SET trial_reminder_sent = TRUE WHERE id = ?`, [shop.id]);
-        console.log(`[trial-reminder] sent to shop=${shop.id}`);
-      } catch (e) {
-        console.error(`[trial-reminder] failed for shop=${shop.id}:`, e.message);
-      }
+      await db.run(`UPDATE shops SET trial_reminder_sent = TRUE WHERE id = ?`, [shop.id]);
+      console.log(`[trial-reminder] marked shop=${shop.id} (${shop.name})`);
     }
   } catch (err) {
     console.error('[trial-reminder] scheduler error:', err.message);
   }
 }
 
-// Day-3 Activation Notify — check if bot ever responded; if not, prompt setup
 async function sendDay3Notifications() {
-  try {
-    const db = getDb();
-    if (!db) return;
-    // Shops that signed up ~3 days ago and have LINE Notify token
-    const shops = await db.all(`
-      SELECT s.id, s.name, s.line_notify_token
-      FROM shops s
-      WHERE s.line_notify_token IS NOT NULL AND s.line_notify_token != ''
-        AND s.created_at BETWEEN NOW() - INTERVAL '4 days' AND NOW() - INTERVAL '2 days'
-        AND NOT EXISTS (
-          SELECT 1 FROM conversations c WHERE c.shop_id = s.id LIMIT 1
-        )
-    `);
-    for (const shop of shops) {
-      const msg = `\n🐱 สวัสดีครับ! บอท MeowChat ของ "${shop.name}" ทำงานได้แล้วไหมครับ?\n\nถ้ายังไม่ได้ตั้งค่า webhook ไม่ต้องกังวล — เข้าไปที่ my.meowchat.store/bot แล้วทำตาม step-by-step ได้เลย ใช้เวลาแค่ 5 นาที\n\nมีปัญหาติดต่อ @MeowChatSupport ได้เลยครับ 🙏`;
-      try {
-        await fetch('https://notify-api.line.me/api/notify', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ message: msg }),
-        });
-        console.log(`[day3-notify] sent to shop=${shop.id}`);
-      } catch (e) {
-        console.error(`[day3-notify] failed for shop=${shop.id}:`, e.message);
-      }
-    }
-  } catch (err) {
-    console.error('[day3-notify] error:', err.message);
-  }
+  // TODO: replace with merchant LINE push once merchant LINE user ID is stored
 }
 
-// Weekly Summary Digest — every Monday sends last 7 days stats via LINE Notify
 async function sendWeeklySummary() {
-  const now = new Date();
-  if (now.getDay() !== 1) return; // Monday only
-  try {
-    const db = getDb();
-    if (!db) return;
-    const shops = await db.all(`
-      SELECT s.id, s.name, s.line_notify_token
-      FROM shops s
-      WHERE s.line_notify_token IS NOT NULL AND s.line_notify_token != ''
-    `);
-    for (const shop of shops) {
-      const stats = await db.get(`
-        SELECT
-          COUNT(*) as total,
-          SUM(CASE WHEN escalated = 1 THEN 1 ELSE 0 END) as escalated
-        FROM conversations
-        WHERE shop_id = ?
-          AND created_at >= NOW() - INTERVAL '7 days'
-      `, [shop.id]);
-      const total = stats?.total ?? 0;
-      if (total === 0) continue; // no activity, skip
-      const esc = stats?.escalated ?? 0;
-      const aiRate = total > 0 ? Math.round(((total - esc) / total) * 100) : 0;
-      const timeSaved = Math.round((total * 3) / 60);
-      const msg = `\n📊 สรุปสัปดาห์ — "${shop.name}"\n\n🤖 บอทตอบแทนคุณ: ${total} ครั้ง\n⏰ ประหยัดเวลา: ~${timeSaved} ชั่วโมง\n✅ AI ตอบได้เอง: ${aiRate}%\n🔔 ส่งต่อพนักงาน: ${esc} ครั้ง\n\nดูรายละเอียดที่ my.meowchat.store 🐱`;
-      try {
-        await fetch('https://notify-api.line.me/api/notify', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ message: msg }),
-        });
-        console.log(`[weekly-summary] sent to shop=${shop.id}`);
-      } catch (e) {
-        console.error(`[weekly-summary] failed for shop=${shop.id}:`, e.message);
-      }
-    }
-  } catch (err) {
-    console.error('[weekly-summary] error:', err.message);
-  }
+  // TODO: replace with merchant LINE push once merchant LINE user ID is stored
 }
 
 // Subscription State Machine — runs daily
@@ -889,7 +789,7 @@ async function runSubscriptionStateMachine() {
 
     // 2. Grace period over → lock bot
     const expired = await db.all(`
-      SELECT id, name, line_notify_token
+      SELECT id, name
       FROM shops
       WHERE subscription_status = 'grace'
         AND grace_period_ends_at < NOW()
@@ -897,16 +797,7 @@ async function runSubscriptionStateMachine() {
     `);
     for (const shop of expired) {
       await db.run(`UPDATE shops SET bot_locked = TRUE, subscription_status = 'expired' WHERE id = ?`, [shop.id]);
-      // Notify owner
-      if (shop.line_notify_token) {
-        const msg = `\n🔒 บอท MeowChat ของ "${shop.name}" หยุดทำงานชั่วคราว\n\nกรุณา Upgrade เพื่อเปิดใช้งานอีกครั้ง\n👉 my.meowchat.store/subscription\nStarter ฿490/เดือน`;
-        fetch('https://notify-api.line.me/api/notify', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ message: msg }),
-        }).catch(() => {});
-      }
-      console.log(`[state-machine] locked bot for shop=${shop.id}`);
+      console.log(`[state-machine] locked bot for shop=${shop.id} (${shop.name})`);
     }
   } catch (err) {
     console.error('[state-machine] error:', err.message);

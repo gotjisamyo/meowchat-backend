@@ -435,7 +435,7 @@ router.post('/:botId/handoff', async (req, res) => {
 
     // Verify ownership
     const shop = await db.get(
-      'SELECT id, name, line_access_token, line_channel_id, line_notify_token FROM shops WHERE id = ? AND user_id = ?',
+      'SELECT id, name, line_access_token, line_channel_id FROM shops WHERE id = ? AND user_id = ?',
       [botId, req.userId]
     );
 
@@ -452,14 +452,16 @@ router.post('/:botId/handoff', async (req, res) => {
       VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `, [handoffId, botId, lineUserId || null, safeCustomerName, safeMessage]);
 
-    // Notify merchant via LINE Notify (correct — uses notify token, not channel ID)
-    if (shop.line_notify_token) {
-      const notifyMsg = `\n🔔 มีลูกค้าต้องการคุยกับคุณ!\nชื่อ: ${customerName || 'ลูกค้า'}\nร้าน: ${shop.name}${message ? `\nข้อความ: ${message}` : ''}\n\nกรุณาตอบกลับที่ my.meowchat.store/handoff`;
-      fetch('https://notify-api.line.me/api/notify', {
+    // Push notification to admin via LINE Messaging API
+    const adminUserId = process.env.ADMIN_LINE_USER_ID;
+    const channelToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+    if (adminUserId && channelToken) {
+      const pushMsg = `🔔 มีลูกค้าต้องการคุยกับพนักงาน!\nชื่อ: ${safeCustomerName}\nร้าน: ${shop.name}${safeMessage ? `\nข้อความ: ${safeMessage}` : ''}\n\n👉 app.meowchat.store`;
+      fetch('https://api.line.me/v2/bot/message/push', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${shop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ message: notifyMsg }),
-      }).catch(e => console.warn('[handoff] LINE Notify failed:', e.message));
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${channelToken}` },
+        body: JSON.stringify({ to: adminUserId, messages: [{ type: 'text', text: pushMsg }] }),
+      }).catch(e => console.warn('[handoff] LINE push failed:', e.message));
     }
 
     res.json({

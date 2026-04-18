@@ -167,15 +167,7 @@ router.post('/reward', async (req, res) => {
         [newEndsAt.toISOString(), conversion.referrer_shop_id]
       );
 
-      // Notify referrer
-      if (referrerShop.line_notify_token) {
-        const msg = `\n🎁 ยินดีด้วย! เพื่อนของคุณ Upgrade แล้ว\nคุณได้รับ MeowChat ฟรี 1 เดือน! 🐱\n\nต่ออายุถึง: ${newEndsAt.toLocaleDateString('th-TH')}`;
-        fetch('https://notify-api.line.me/api/notify', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${referrerShop.line_notify_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ message: msg }),
-        }).catch(() => {});
-      }
+      console.log(`[referral] shop=${referrerShop.id} (${referrerShop.name}) extended to ${newEndsAt.toLocaleDateString('th-TH')}`);
     }
 
     await db.run('UPDATE referral_conversions SET rewarded = TRUE WHERE id = ?', [conversion.id]);
