@@ -170,6 +170,7 @@ app.use('/api/team', require('./routes/team'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/payment', require('./routes/payment'));
 const { router: handoffsRouter, broadcastHandoffEvent } = require('./routes/handoffs');
+const { pushToLine } = require('./utils/line-push');
 app.use('/api/handoffs', handoffsRouter);
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/referral', require('./routes/referral'));
@@ -312,8 +313,18 @@ app.post('/api/internal/log', async (req, res) => {
           [handoffId, botId, lineUserId, customerName, userText || '']
         ).catch(e => console.warn('[handoff] insert failed:', e.message));
 
-        // NOTE: Merchant is notified via SSE dashboard (my.meowchat.store).
-        // Do NOT push to platform admin — handoff events belong to the merchant, not Got.
+        // Push LINE notification to merchant if they have paired their LINE
+        const shopForNotify = await db.get(
+          'SELECT owner_line_user_id, line_access_token FROM shops WHERE id = ?',
+          [botId]
+        );
+        if (shopForNotify?.owner_line_user_id && shopForNotify?.line_access_token) {
+          pushToLine(
+            shopForNotify.owner_line_user_id,
+            `🔔 ลูกค้าขอคุยกับพนักงาน!\nลูกค้า: ${customerName || 'ลูกค้า'}\nข้อความ: "${userText || ''}"\n\n👉 my.meowchat.store`,
+            shopForNotify.line_access_token
+          );
+        }
 
         broadcastHandoffEvent('handoff_new', {
           id: handoffId,
