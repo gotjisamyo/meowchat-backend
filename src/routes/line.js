@@ -212,11 +212,20 @@ async function processEvent(event, shop, products, knowledgeBase) {
   // Check if message matches active pairing code
   {
     const db = getDb();
-    const shopRecord = await db.get(
-      `SELECT pairing_code FROM shops WHERE id = ? AND pairing_code_expires_at > NOW()`,
-      [shop.id]
-    );
-    if (shopRecord?.pairing_code && userText.trim().toUpperCase() === shopRecord.pairing_code) {
+    let shopRecord = null;
+    try {
+      shopRecord = await db.get(
+        `SELECT pairing_code, pairing_code_expires_at FROM shops WHERE id = ?`,
+        [shop.id]
+      );
+    } catch (e) {
+      console.error('[pairing] db.get error:', e.message);
+    }
+    console.log(`[pairing] shopId=${shop.id} code_in_db=${shopRecord?.pairing_code} expires=${shopRecord?.pairing_code_expires_at} userText=${userText}`);
+    const codeMatch = shopRecord?.pairing_code && userText.trim().toUpperCase() === shopRecord.pairing_code;
+    const notExpired = shopRecord?.pairing_code_expires_at && new Date(shopRecord.pairing_code_expires_at) > new Date();
+    console.log(`[pairing] codeMatch=${codeMatch} notExpired=${notExpired}`);
+    if (codeMatch && notExpired) {
       await db.run(
         `UPDATE shops SET owner_line_user_id = ?, pairing_code = NULL, pairing_code_expires_at = NULL WHERE id = ?`,
         [userId, shop.id]
