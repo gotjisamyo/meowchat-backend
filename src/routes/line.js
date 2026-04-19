@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const axios = require('axios');
 const { getDb } = require('../db');
 const { updateUsage } = require('./billing');
+const { pushToLine } = require('../utils/line-push');
 
 const router = express.Router();
 
@@ -25,14 +26,6 @@ async function replyToLine(replyToken, text, accessToken) {
     { replyToken, messages: [{ type: 'text', text }] },
     { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` } }
   ).catch(err => console.error('[LINE reply error]', err.response?.data || err.message));
-}
-
-async function pushToLine(userId, text, accessToken) {
-  await axios.post(
-    'https://api.line.me/v2/bot/message/push',
-    { to: userId, messages: [{ type: 'text', text }] },
-    { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` } }
-  ).catch(err => console.error('[LINE push error]', err.response?.data || err.message));
 }
 
 // ─── Escalation detection (mirrored from engine/guardrails.ts) ─────────────────
@@ -216,6 +209,23 @@ async function processEvent(event, shop, products, knowledgeBase) {
 
   if (!userId || !replyToken || !userText) return;
 
+  // Check if message matches active pairing code
+  {
+    const db = getDb();
+    const shopRecord = await db.get(
+      `SELECT pairing_code FROM shops WHERE id = ? AND pairing_code_expires_at > datetime('now')`,
+      [shop.id]
+    );
+    if (shopRecord?.pairing_code && userText.trim().toUpperCase() === shopRecord.pairing_code) {
+      await db.run(
+        `UPDATE shops SET owner_line_user_id = ?, pairing_code = NULL, pairing_code_expires_at = NULL WHERE id = ?`,
+        [userId, shop.id]
+      );
+      await replyToLine(replyToken, '✅ เชื่อมต่อสำเร็จ! คุณจะได้รับแจ้งเตือน Handoff ทาง LINE นี้ค่ะ', shop.line_access_token);
+      return; // Do NOT pass to AI
+    }
+  }
+
   const escalated = isEscalation(userText);
 
   let reply;
@@ -249,14 +259,16 @@ async function processEvent(event, shop, products, knowledgeBase) {
       [handoffId, shop.id, userId, customerName, userText]
     ).catch(e => console.error('[handoff save error]', e.message));
 
-    // Push LINE notification to admin (Got)
-    const adminUserId = process.env.ADMIN_LINE_USER_ID;
-    const channelToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-    if (adminUserId && channelToken) {
+    // Push LINE notification to merchant if they have paired their LINE
+    const shopForNotify = await db.get(
+      'SELECT owner_line_user_id, line_access_token FROM shops WHERE id = ?',
+      [shop.id]
+    ).catch(() => null);
+    if (shopForNotify?.owner_line_user_id && shopForNotify?.line_access_token) {
       pushToLine(
-        adminUserId,
-        `🔔 ลูกค้าต้องการคุยกับคน!\nร้าน: ${shop.name}\nลูกค้า: ${customerName || userId}\nข้อความ: "${userText}"\n\n👉 app.meowchat.store`,
-        channelToken
+        shopForNotify.owner_line_user_id,
+        `🔔 ลูกค้าขอคุยกับพนักงาน!\nลูกค้า: ${customerName || userId}\nข้อความ: "${userText}"\n\n👉 my.meowchat.store`,
+        shopForNotify.line_access_token
       );
     }
     console.log(`[LINE] escalation detected shopId=${shop.id} userId=${userId}`);
