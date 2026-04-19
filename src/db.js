@@ -495,6 +495,9 @@ async function initDatabase() {
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS show_branding INTEGER DEFAULT 1`);
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS escalation_keywords TEXT DEFAULT ''`);
   await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS ai_model TEXT DEFAULT 'gemini-2.0-flash'`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS owner_line_user_id TEXT DEFAULT ''`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS pairing_code TEXT`);
+  await db.exec(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS pairing_code_expires_at TIMESTAMP`);
 
   // Seed credit packs
   await db.exec(`
