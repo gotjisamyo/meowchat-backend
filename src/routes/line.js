@@ -221,10 +221,13 @@ async function processEvent(event, shop, products, knowledgeBase) {
     } catch (e) {
       console.error('[pairing] db.get error:', e.message);
     }
-    console.log(`[pairing] shopId=${shop.id} code_in_db=${shopRecord?.pairing_code} expires=${shopRecord?.pairing_code_expires_at} userText=${userText}`);
     const codeMatch = shopRecord?.pairing_code && userText.trim().toUpperCase() === shopRecord.pairing_code;
     const notExpired = shopRecord?.pairing_code_expires_at && new Date(shopRecord.pairing_code_expires_at) > new Date();
-    console.log(`[pairing] codeMatch=${codeMatch} notExpired=${notExpired}`);
+    // TEMP DEBUG: reply with pairing state if user sends DEBUG_PAIR
+    if (userText.trim() === 'DEBUG_PAIR') {
+      await replyToLine(replyToken, `[debug] shopId=${shop.id}\ncode_in_db=${shopRecord?.pairing_code ?? 'null'}\nexpires=${shopRecord?.pairing_code_expires_at ?? 'null'}\nnow=${new Date().toISOString()}\nnot_expired=${notExpired}`, shop.line_access_token);
+      return;
+    }
     if (codeMatch && notExpired) {
       await db.run(
         `UPDATE shops SET owner_line_user_id = ?, pairing_code = NULL, pairing_code_expires_at = NULL WHERE id = ?`,
