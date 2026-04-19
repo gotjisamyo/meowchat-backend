@@ -5,7 +5,7 @@ async function pushToLine(userId, text, accessToken) {
   await axios.post(
     'https://api.line.me/v2/bot/message/push',
     { to: userId, messages: [{ type: 'text', text }] },
-    { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` } }
+    { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` }, timeout: 5000 }
   ).catch(err => console.error('[LINE push error]', err.response?.data || err.message));
 }
 
