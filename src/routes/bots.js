@@ -1032,11 +1032,11 @@ router.get('/:botId/owner-line/status', async (req, res) => {
     const { botId } = req.params;
     const db = await getDb();
     const shop = await db.get(
-      'SELECT owner_line_user_id FROM shops WHERE id = ?',
+      'SELECT owner_line_user_id, pairing_code, pairing_code_expires_at FROM shops WHERE id = ?',
       [botId]
     );
     const paired = !!(shop?.owner_line_user_id);
-    res.json({ paired, line_user_id: shop?.owner_line_user_id || null });
+    res.json({ paired, line_user_id: shop?.owner_line_user_id || null, pairing_code: shop?.pairing_code || null, pairing_code_expires_at: shop?.pairing_code_expires_at || null });
   } catch (err) {
     console.error('[owner-line/status]', err);
     res.status(500).json({ error: 'Failed to get pairing status' });
