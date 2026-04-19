@@ -169,7 +169,8 @@ app.use('/api/bookings', require('./routes/bookings'));
 app.use('/api/team', require('./routes/team'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/payment', require('./routes/payment'));
-app.use('/api/handoffs', require('./routes/handoffs'));
+const { router: handoffsRouter, broadcastHandoffEvent } = require('./routes/handoffs');
+app.use('/api/handoffs', handoffsRouter);
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/referral', require('./routes/referral'));
 app.use('/api/credits', authMiddleware, require('./routes/credits'));
@@ -261,9 +262,10 @@ app.post('/api/internal/log', async (req, res) => {
       (async () => {
         try {
           const shop = await db.get('SELECT line_access_token FROM shops WHERE id = ?', [botId]);
-          if (!shop?.line_access_token) return;
+          const lineToken = shop?.line_access_token || process.env.LINE_CHANNEL_ACCESS_TOKEN;
+          if (!lineToken) return;
           const profileRes = await fetch(`https://api.line.me/v2/bot/profile/${lineUserId}`, {
-            headers: { Authorization: `Bearer ${shop.line_access_token}` },
+            headers: { Authorization: `Bearer ${lineToken}` },
           });
           if (!profileRes.ok) return;
           const profile = await profileRes.json();
@@ -272,9 +274,14 @@ app.post('/api/internal/log', async (req, res) => {
               'UPDATE customers SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
               [profile.displayName, custId]
             );
-            // Also update conversation customer_name
             await db.run(
               'UPDATE conversations SET customer_name = ? WHERE shop_id = ? AND line_user_id = ?',
+              [profile.displayName, botId, lineUserId]
+            );
+            // Also update any pending/active handoffs for this user
+            await db.run(
+              `UPDATE handoffs SET customer_name = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE shop_id = ? AND line_user_id = ? AND status IN ('pending', 'active')`,
               [profile.displayName, botId, lineUserId]
             );
           }
@@ -282,24 +289,41 @@ app.post('/api/internal/log', async (req, res) => {
       })();
     }
 
-    // Create handoff record + notify when newly escalated
-    if (escalated && !wasEscalated) {
-      // Look up customer name for the handoff card
-      const customer = await db.get(
-        'SELECT name FROM customers WHERE shop_id = ? AND line_user_id = ? LIMIT 1',
+    // Create handoff record + notify when escalated and no active handoff exists
+    if (escalated) {
+      const existingHandoff = await db.get(
+        `SELECT id FROM handoffs WHERE shop_id = ? AND line_user_id = ? AND status IN ('pending', 'active') LIMIT 1`,
         [botId, lineUserId]
       ).catch(() => null);
-      const customerName = customer?.name || lineUserId;
 
-      const handoffId = 'hdo_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
-      await db.run(
-        `INSERT INTO handoffs (id, shop_id, line_user_id, customer_name, message, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-         ON CONFLICT (id) DO NOTHING`,
-        [handoffId, botId, lineUserId, customerName, userText || '']
-      ).catch(e => console.warn('[handoff] insert failed:', e.message));
+      if (!existingHandoff) {
+        // Look up customer name for the handoff card
+        const customer = await db.get(
+          'SELECT name FROM customers WHERE shop_id = ? AND line_user_id = ? LIMIT 1',
+          [botId, lineUserId]
+        ).catch(() => null);
+        const customerName = customer?.name || lineUserId;
 
-      pushAdminNotify(`🔔 ลูกค้าขอคุยกับพนักงาน!\nร้าน: ${botId}\nลูกค้า: ${customerName}\nข้อความ: "${userText || ''}"\n\n👉 app.meowchat.store`).catch(() => {});
+        const handoffId = 'hdo_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
+        await db.run(
+          `INSERT INTO handoffs (id, shop_id, line_user_id, customer_name, message, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           ON CONFLICT (id) DO NOTHING`,
+          [handoffId, botId, lineUserId, customerName, userText || '']
+        ).catch(e => console.warn('[handoff] insert failed:', e.message));
+
+        pushAdminNotify(`🔔 ลูกค้าขอคุยกับพนักงาน!\nร้าน: ${botId}\nลูกค้า: ${customerName}\nข้อความ: "${userText || ''}"\n\n👉 app.meowchat.store`).catch(() => {});
+
+        broadcastHandoffEvent('handoff_new', {
+          id: handoffId,
+          shop_id: botId,
+          line_user_id: lineUserId,
+          customer_name: customerName,
+          message: userText || '',
+          status: 'pending',
+          created_at: new Date().toISOString(),
+        });
+      }
     }
 
     res.json({ ok: true, conversationId: conv.id });

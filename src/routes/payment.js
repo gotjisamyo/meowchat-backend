@@ -221,7 +221,9 @@ router.post('/notify', authMiddleware, async (req, res) => {
           to: adminUserId,
           messages: [{ type: 'text', text: `💰 สลิปใหม่!\nร้าน: ${shop.name}\nชื่อ: ${normalizedPayerName}\nจำนวน: ฿${parsedAmount.toLocaleString()}\n\n👉 app.meowchat.store` }],
         }),
-      }).catch(() => {});
+      }).then(r => console.log(`[notify] LINE push → ${r.status}`)).catch(e => console.error('[notify] LINE push failed:', e.message));
+    } else {
+      console.warn('[notify] ADMIN_LINE_USER_ID or LINE_CHANNEL_ACCESS_TOKEN not set — skipping push');
     }
 
   } catch (error) {
