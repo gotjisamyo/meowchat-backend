@@ -146,7 +146,7 @@ if (!process.env.LINE_CHANNEL_ACCESS_TOKEN) {
 // Health check — always responds so Railway healthcheck passes
 let dbReady = false;
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', db: dbReady ? 'connected' : 'initializing', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', db: dbReady ? 'connected' : 'initializing', timestamp: new Date().toISOString(), v: 'pairing-v2' });
 });
 
 // API routes

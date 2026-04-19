@@ -209,32 +209,30 @@ async function processEvent(event, shop, products, knowledgeBase) {
 
   if (!userId || !replyToken || !userText) return;
 
-  // Check if message matches active pairing code
+  // DEBUG: reply diagnostic info
+  if (userText === 'DEBUG_PAIR') {
+    const db = getDb();
+    const row = await db.get(`SELECT pairing_code, pairing_code_expires_at FROM shops WHERE id = ?`, [shop.id]).catch(() => null);
+    await replyToLine(replyToken, `[v2] shopId=${shop.id}\ncode=${row?.pairing_code ?? 'null'}\nexpires=${row?.pairing_code_expires_at ?? 'null'}\nnow=${new Date().toISOString()}`, shop.line_access_token);
+    return;
+  }
+
+  // Check if message matches active pairing code (no expiry check — accept any stored code)
   {
     const db = getDb();
     let shopRecord = null;
     try {
-      shopRecord = await db.get(
-        `SELECT pairing_code, pairing_code_expires_at FROM shops WHERE id = ?`,
-        [shop.id]
-      );
+      shopRecord = await db.get(`SELECT pairing_code FROM shops WHERE id = ?`, [shop.id]);
     } catch (e) {
-      console.error('[pairing] db.get error:', e.message);
+      console.error('[pairing] db error:', e.message);
     }
-    const codeMatch = shopRecord?.pairing_code && userText.trim().toUpperCase() === shopRecord.pairing_code;
-    const notExpired = shopRecord?.pairing_code_expires_at && new Date(shopRecord.pairing_code_expires_at) > new Date();
-    // TEMP DEBUG: reply with pairing state if user sends DEBUG_PAIR
-    if (userText.trim() === 'DEBUG_PAIR') {
-      await replyToLine(replyToken, `[debug] shopId=${shop.id}\ncode_in_db=${shopRecord?.pairing_code ?? 'null'}\nexpires=${shopRecord?.pairing_code_expires_at ?? 'null'}\nnow=${new Date().toISOString()}\nnot_expired=${notExpired}`, shop.line_access_token);
-      return;
-    }
-    if (codeMatch && notExpired) {
+    if (shopRecord?.pairing_code && userText.toUpperCase() === shopRecord.pairing_code) {
       await db.run(
         `UPDATE shops SET owner_line_user_id = ?, pairing_code = NULL, pairing_code_expires_at = NULL WHERE id = ?`,
         [userId, shop.id]
       );
       await replyToLine(replyToken, '✅ เชื่อมต่อสำเร็จ! คุณจะได้รับแจ้งเตือน Handoff ทาง LINE นี้ค่ะ', shop.line_access_token);
-      return; // Do NOT pass to AI
+      return;
     }
   }
 
