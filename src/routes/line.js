@@ -213,7 +213,7 @@ async function processEvent(event, shop, products, knowledgeBase) {
   {
     const db = getDb();
     const shopRecord = await db.get(
-      `SELECT pairing_code FROM shops WHERE id = ? AND pairing_code_expires_at > datetime('now')`,
+      `SELECT pairing_code FROM shops WHERE id = ? AND pairing_code_expires_at > NOW()`,
       [shop.id]
     );
     if (shopRecord?.pairing_code && userText.trim().toUpperCase() === shopRecord.pairing_code) {

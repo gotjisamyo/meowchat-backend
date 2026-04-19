@@ -500,7 +500,7 @@ router.get('/:botId/handoffs', async (req, res) => {
       FROM handoffs h
       WHERE h.shop_id = ? AND (
         h.status IN ('pending', 'accepted') OR
-        (h.status = 'closed' AND h.updated_at > datetime('now', '-24 hours'))
+        (h.status = 'closed' AND h.updated_at > NOW() - INTERVAL '24 hours')
       )
       ORDER BY
         CASE h.status WHEN 'pending' THEN 0 WHEN 'accepted' THEN 1 ELSE 2 END,
@@ -1016,7 +1016,7 @@ router.post('/:botId/owner-line/pair', async (req, res) => {
       code += chars[Math.floor(Math.random() * chars.length)];
     }
     await db.run(
-      `UPDATE shops SET pairing_code = ?, pairing_code_expires_at = datetime('now', '+10 minutes') WHERE id = ?`,
+      `UPDATE shops SET pairing_code = ?, pairing_code_expires_at = NOW() + INTERVAL '10 minutes' WHERE id = ?`,
       [code, botId]
     );
     res.json({ code, expires_in: 600 });
