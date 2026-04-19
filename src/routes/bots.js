@@ -1,5 +1,6 @@
 const express = require('express');
 const { getDb } = require('../db');
+const { pushToLine } = require('../utils/line-push');
 const { trackEvent, EVENTS } = require('../events');
 const https = require('https');
 const crypto = require('crypto');
@@ -452,8 +453,18 @@ router.post('/:botId/handoff', async (req, res) => {
       VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `, [handoffId, botId, lineUserId || null, safeCustomerName, safeMessage]);
 
-    // NOTE: Merchant is notified via SSE dashboard (my.meowchat.store).
-    // Do NOT push to platform admin — handoff events belong to the merchant, not Got.
+    // Push LINE notification to merchant if they have paired their LINE
+    const shopForNotify = await db.get(
+      'SELECT owner_line_user_id, line_access_token FROM shops WHERE id = ?',
+      [botId]
+    );
+    if (shopForNotify?.owner_line_user_id && shopForNotify?.line_access_token) {
+      pushToLine(
+        shopForNotify.owner_line_user_id,
+        `🔔 ลูกค้าขอคุยกับพนักงาน!\nลูกค้า: ${safeCustomerName || 'ลูกค้า'}\nข้อความ: "${safeMessage || ''}"\n\n👉 my.meowchat.store`,
+        shopForNotify.line_access_token
+      );
+    }
 
     res.json({
       success: true,
@@ -990,6 +1001,61 @@ router.get('/:botId/analytics/topics', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/bots/:botId/owner-line/pair — generate pairing code for merchant LINE
+router.post('/:botId/owner-line/pair', async (req, res) => {
+  try {
+    const { botId } = req.params;
+    const db = await getDb();
+    // Generate 6-char code: A-Z excluding I and O, 2-9 (no 0 or 1)
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+      code += chars[Math.floor(Math.random() * chars.length)];
+    }
+    await db.run(
+      `UPDATE shops SET pairing_code = ?, pairing_code_expires_at = datetime('now', '+10 minutes') WHERE id = ?`,
+      [code, botId]
+    );
+    res.json({ code, expires_in: 600 });
+  } catch (err) {
+    console.error('[owner-line/pair]', err);
+    res.status(500).json({ error: 'Failed to generate pairing code' });
+  }
+});
+
+// GET /api/bots/:botId/owner-line/status — check if merchant LINE is paired
+router.get('/:botId/owner-line/status', async (req, res) => {
+  try {
+    const { botId } = req.params;
+    const db = await getDb();
+    const shop = await db.get(
+      'SELECT owner_line_user_id FROM shops WHERE id = ?',
+      [botId]
+    );
+    const paired = !!(shop?.owner_line_user_id);
+    res.json({ paired, line_user_id: shop?.owner_line_user_id || null });
+  } catch (err) {
+    console.error('[owner-line/status]', err);
+    res.status(500).json({ error: 'Failed to get pairing status' });
+  }
+});
+
+// DELETE /api/bots/:botId/owner-line/pair — disconnect merchant LINE
+router.delete('/:botId/owner-line/pair', async (req, res) => {
+  try {
+    const { botId } = req.params;
+    const db = await getDb();
+    await db.run(
+      `UPDATE shops SET owner_line_user_id = '', pairing_code = NULL, pairing_code_expires_at = NULL WHERE id = ?`,
+      [botId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[owner-line/disconnect]', err);
+    res.status(500).json({ error: 'Failed to disconnect' });
   }
 });
 
