@@ -690,6 +690,10 @@ function setupBillingRoutes(app) {
 
   app.get('/api/billing/subscription', authMiddleware, async (req, res) => {
     try {
+      // Admin accounts don't belong to a shop — return null subscription gracefully
+      if (req.user?.role === 'admin' && !req.query.shopId && !req.body.shopId && !req.headers['x-shop-id']) {
+        return res.json({ success: true, data: null });
+      }
       if (!await resolveOwnedShopFromRequest(req, res)) return;
       const subscription = await getSubscription(req.shopId);
       res.json({ success: true, data: subscription });
