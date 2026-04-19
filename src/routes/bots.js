@@ -452,17 +452,8 @@ router.post('/:botId/handoff', async (req, res) => {
       VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `, [handoffId, botId, lineUserId || null, safeCustomerName, safeMessage]);
 
-    // Push notification to admin via LINE Messaging API
-    const adminUserId = process.env.ADMIN_LINE_USER_ID;
-    const channelToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-    if (adminUserId && channelToken) {
-      const pushMsg = `🔔 มีลูกค้าต้องการคุยกับพนักงาน!\nชื่อ: ${safeCustomerName}\nร้าน: ${shop.name}${safeMessage ? `\nข้อความ: ${safeMessage}` : ''}\n\n👉 app.meowchat.store`;
-      fetch('https://api.line.me/v2/bot/message/push', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${channelToken}` },
-        body: JSON.stringify({ to: adminUserId, messages: [{ type: 'text', text: pushMsg }] }),
-      }).catch(e => console.warn('[handoff] LINE push failed:', e.message));
-    }
+    // NOTE: Merchant is notified via SSE dashboard (my.meowchat.store).
+    // Do NOT push to platform admin — handoff events belong to the merchant, not Got.
 
     res.json({
       success: true,
@@ -496,8 +487,13 @@ router.get('/:botId/handoffs', async (req, res) => {
       SELECT h.id, h.shop_id, h.line_user_id, h.customer_name, h.message,
              h.status, h.resolved_at, h.created_at, h.updated_at
       FROM handoffs h
-      WHERE h.shop_id = ? AND h.status IN ('pending', 'accepted')
-      ORDER BY h.created_at DESC
+      WHERE h.shop_id = ? AND (
+        h.status IN ('pending', 'accepted') OR
+        (h.status = 'closed' AND h.updated_at > datetime('now', '-24 hours'))
+      )
+      ORDER BY
+        CASE h.status WHEN 'pending' THEN 0 WHEN 'accepted' THEN 1 ELSE 2 END,
+        h.created_at DESC
       LIMIT 50
     `, [botId]);
 

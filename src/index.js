@@ -312,7 +312,8 @@ app.post('/api/internal/log', async (req, res) => {
           [handoffId, botId, lineUserId, customerName, userText || '']
         ).catch(e => console.warn('[handoff] insert failed:', e.message));
 
-        pushAdminNotify(`🔔 ลูกค้าขอคุยกับพนักงาน!\nร้าน: ${botId}\nลูกค้า: ${customerName}\nข้อความ: "${userText || ''}"\n\n👉 app.meowchat.store`).catch(() => {});
+        // NOTE: Merchant is notified via SSE dashboard (my.meowchat.store).
+        // Do NOT push to platform admin — handoff events belong to the merchant, not Got.
 
         broadcastHandoffEvent('handoff_new', {
           id: handoffId,
