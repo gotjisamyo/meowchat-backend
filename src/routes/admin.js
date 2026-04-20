@@ -967,6 +967,21 @@ router.get('/endpoint-stats', async (req, res) => {
   }
 });
 
+// GET /api/admin/path-status-debug?path=... — debug: distinct status codes for a path
+router.get('/path-status-debug', async (req, res) => {
+  const { path: targetPath = '/f94196ccb1519ed2/handoffs' } = req.query;
+  try {
+    const db = getDb();
+    const rows = await db.all(
+      `SELECT status_code, COUNT(*) AS cnt FROM request_logs WHERE path = ? GROUP BY status_code ORDER BY cnt DESC`,
+      [targetPath]
+    );
+    res.json({ path: targetPath, breakdown: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/admin/settings — get admin profile/settings
 router.get('/settings', async (req, res) => {
   try {
