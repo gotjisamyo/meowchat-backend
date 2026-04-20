@@ -66,11 +66,12 @@ app.use((err, req, res, next) => {
 // ─── Request logging middleware — feeds /api/admin/api-usage + /endpoint-stats ──
 const SKIP_LOG_PREFIXES = ['/health', '/api/line/webhook', '/api/internal/'];
 
-// Normalize path: replace UUIDs and numeric IDs with :id so grouping works
+// Normalize path: replace UUIDs, hex IDs, and numeric IDs with :id so grouping works
 function normalizePath(p) {
   return p
-    .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '/:id')
-    .replace(/\/\d+/g, '/:id');
+    .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '/:id') // UUID
+    .replace(/\/[0-9a-f]{8,}/gi, '/:id') // hex IDs (shop/handoff 16-char IDs)
+    .replace(/\/\d+/g, '/:id'); // numeric IDs
 }
 
 let _pruneScheduled = false;
@@ -86,12 +87,14 @@ function scheduleLogPrune(db) {
 }
 
 app.use((req, res, next) => {
-  const skip = SKIP_LOG_PREFIXES.some(p => req.path.startsWith(p));
+  // Capture originalUrl now — req.path gets mutated to router-relative once request enters sub-router
+  const fullPath = req.originalUrl.split('?')[0];
+  const skip = SKIP_LOG_PREFIXES.some(p => fullPath.startsWith(p));
   if (skip) return next();
   const startMs = Date.now();
   res.on('finish', () => {
     const duration = Date.now() - startMs;
-    const path = normalizePath(req.path);
+    const path = normalizePath(fullPath);
     try {
       const { getDb } = require('./db');
       const db = getDb();

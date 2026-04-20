@@ -967,31 +967,6 @@ router.get('/endpoint-stats', async (req, res) => {
   }
 });
 
-// GET /api/admin/path-status-debug?path=... — debug: status codes + daily timeline for a path
-router.get('/path-status-debug', async (req, res) => {
-  const { path: targetPath = '/f94196ccb1519ed2/handoffs' } = req.query;
-  try {
-    const db = getDb();
-    const [breakdown, timeline] = await Promise.all([
-      db.all(
-        `SELECT status_code, COUNT(*) AS cnt FROM request_logs WHERE path = ? GROUP BY status_code ORDER BY cnt DESC`,
-        [targetPath]
-      ),
-      db.all(
-        `SELECT DATE_TRUNC('hour', created_at) AS hour,
-                SUM(CASE WHEN status_code < 400 THEN 1 ELSE 0 END) AS ok,
-                SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS errors
-         FROM request_logs WHERE path = ? AND created_at >= NOW() - INTERVAL '7 days'
-         GROUP BY DATE_TRUNC('hour', created_at) ORDER BY hour`,
-        [targetPath]
-      ),
-    ]);
-    res.json({ path: targetPath, breakdown, timeline });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // GET /api/admin/settings — get admin profile/settings
 router.get('/settings', async (req, res) => {
   try {
