@@ -967,16 +967,26 @@ router.get('/endpoint-stats', async (req, res) => {
   }
 });
 
-// GET /api/admin/path-status-debug?path=... — debug: distinct status codes for a path
+// GET /api/admin/path-status-debug?path=... — debug: status codes + daily timeline for a path
 router.get('/path-status-debug', async (req, res) => {
   const { path: targetPath = '/f94196ccb1519ed2/handoffs' } = req.query;
   try {
     const db = getDb();
-    const rows = await db.all(
-      `SELECT status_code, COUNT(*) AS cnt FROM request_logs WHERE path = ? GROUP BY status_code ORDER BY cnt DESC`,
-      [targetPath]
-    );
-    res.json({ path: targetPath, breakdown: rows });
+    const [breakdown, timeline] = await Promise.all([
+      db.all(
+        `SELECT status_code, COUNT(*) AS cnt FROM request_logs WHERE path = ? GROUP BY status_code ORDER BY cnt DESC`,
+        [targetPath]
+      ),
+      db.all(
+        `SELECT DATE_TRUNC('day', created_at) AS day,
+                SUM(CASE WHEN status_code < 400 THEN 1 ELSE 0 END) AS ok,
+                SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS errors
+         FROM request_logs WHERE path = ?
+         GROUP BY DATE_TRUNC('day', created_at) ORDER BY day`,
+        [targetPath]
+      ),
+    ]);
+    res.json({ path: targetPath, breakdown, timeline });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
