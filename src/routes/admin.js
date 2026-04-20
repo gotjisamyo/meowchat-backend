@@ -918,10 +918,15 @@ router.get('/endpoint-stats', async (req, res) => {
         ROUND(100.0 * SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 2) AS error_rate,
         COUNT(*) AS req_count,
         SUM(CASE WHEN status_code = 200 THEN 1 ELSE 0 END) AS cnt_200,
+        SUM(CASE WHEN status_code = 201 THEN 1 ELSE 0 END) AS cnt_201,
+        SUM(CASE WHEN status_code = 204 THEN 1 ELSE 0 END) AS cnt_204,
+        SUM(CASE WHEN status_code = 400 THEN 1 ELSE 0 END) AS cnt_400,
         SUM(CASE WHEN status_code = 401 THEN 1 ELSE 0 END) AS cnt_401,
+        SUM(CASE WHEN status_code = 403 THEN 1 ELSE 0 END) AS cnt_403,
         SUM(CASE WHEN status_code = 404 THEN 1 ELSE 0 END) AS cnt_404,
+        SUM(CASE WHEN status_code = 429 THEN 1 ELSE 0 END) AS cnt_429,
         SUM(CASE WHEN status_code = 500 THEN 1 ELSE 0 END) AS cnt_500,
-        SUM(CASE WHEN status_code NOT IN (200,201,401,404,500) THEN 1 ELSE 0 END) AS cnt_other
+        SUM(CASE WHEN status_code NOT IN (200,201,204,400,401,403,404,429,500) THEN 1 ELSE 0 END) AS cnt_other
       FROM request_logs
       WHERE created_at >= NOW() - INTERVAL '${interval}'
       GROUP BY path, method
@@ -943,8 +948,13 @@ router.get('/endpoint-stats', async (req, res) => {
       status: Number(r.avg_latency) >= 1000 ? 'Slow' : Number(r.avg_latency) >= 500 ? 'OK' : 'Fast',
       status_breakdown: {
         '200': Number(r.cnt_200 ?? 0),
+        '201': Number(r.cnt_201 ?? 0),
+        '204': Number(r.cnt_204 ?? 0),
+        '400': Number(r.cnt_400 ?? 0),
         '401': Number(r.cnt_401 ?? 0),
+        '403': Number(r.cnt_403 ?? 0),
         '404': Number(r.cnt_404 ?? 0),
+        '429': Number(r.cnt_429 ?? 0),
         '500': Number(r.cnt_500 ?? 0),
         'other': Number(r.cnt_other ?? 0),
       },
