@@ -978,11 +978,11 @@ router.get('/path-status-debug', async (req, res) => {
         [targetPath]
       ),
       db.all(
-        `SELECT DATE_TRUNC('day', created_at) AS day,
+        `SELECT DATE_TRUNC('hour', created_at) AS hour,
                 SUM(CASE WHEN status_code < 400 THEN 1 ELSE 0 END) AS ok,
                 SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS errors
-         FROM request_logs WHERE path = ?
-         GROUP BY DATE_TRUNC('day', created_at) ORDER BY day`,
+         FROM request_logs WHERE path = ? AND created_at >= NOW() - INTERVAL '7 days'
+         GROUP BY DATE_TRUNC('hour', created_at) ORDER BY hour`,
         [targetPath]
       ),
     ]);
