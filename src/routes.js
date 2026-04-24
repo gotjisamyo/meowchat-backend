@@ -49,7 +49,8 @@ function setupRoutes(app) {
     }
   });
 
-  app.get('/api/users/:lineId', authMiddleware, async (req, res) => {
+  app.get('/api/users/:lineId', authMiddleware, async (req, res, next) => {
+    if (req.params.lineId === 'me') return next(); // handled by auth router
     try {
       const user = await getUser(req.params.lineId);
 
