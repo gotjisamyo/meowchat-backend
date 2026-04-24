@@ -782,7 +782,7 @@ router.put('/expenses', async (req, res) => {
 router.get('/analytics/sales', async (_req, res) => {
   try {
     const db = getDb();
-    const [planRows, shopCount, paidCount] = await Promise.all([
+    const [planRows, shopCount, paidCount, churnedCount] = await Promise.all([
       db.all(`
         SELECT p.name, p.price, COUNT(s.id) AS count
         FROM subscriptions s
@@ -793,6 +793,7 @@ router.get('/analytics/sales', async (_req, res) => {
       `).catch(() => []),
       db.get(`SELECT COUNT(*) AS cnt FROM shops`).catch(() => ({ cnt: 0 })),
       db.get(`SELECT COUNT(DISTINCT shop_id) AS cnt FROM subscriptions WHERE status = 'active'`).catch(() => ({ cnt: 0 })),
+      db.get(`SELECT COUNT(DISTINCT shop_id) AS cnt FROM subscriptions WHERE status = 'cancelled'`).catch(() => ({ cnt: 0 })),
     ]);
 
     const products = planRows.map(r => ({
@@ -805,6 +806,7 @@ router.get('/analytics/sales', async (_req, res) => {
 
     const total = Number(shopCount.cnt || 1);
     const paid = Number(paidCount.cnt || 0);
+    const churned = Number(churnedCount.cnt || 0);
     res.json({
       topProducts: products,
       metrics: {
@@ -812,8 +814,8 @@ router.get('/analytics/sales', async (_req, res) => {
           ? Math.round(planRows.reduce((a, r) => a + Number(r.price) * Number(r.count), 0) / Math.max(1, planRows.reduce((a, r) => a + Number(r.count), 0)))
           : 0,
         conversionRate: total > 0 ? Math.round((paid / total) * 100 * 10) / 10 : 0,
-        churnRate: 1.2,
-        paymentGatewayUptime: 99.9,
+        churnRate: (paid + churned) > 0 ? Math.round((churned / (paid + churned)) * 100 * 10) / 10 : 0,
+        paymentGatewayUptime: 0,
       },
     });
   } catch (err) {
@@ -880,12 +882,13 @@ router.get('/api-usage', async (req, res) => {
     ]);
 
     const total = Number(statsRow?.total_requests ?? 0);
+    const errorRate = Number(statsRow?.error_rate ?? 0);
     res.json({
       stats: {
         totalRequests: total,
         avgLatency: Number(statsRow?.avg_latency ?? 0),
-        uptime: 99.9,
-        errorRate: Number(statsRow?.error_rate ?? 0),
+        uptime: errorRate > 0 ? Math.round((100 - errorRate) * 10) / 10 : 100,
+        errorRate,
         quotaUsed: total.toLocaleString(),
         quotaLimit: '100,000',
       },
