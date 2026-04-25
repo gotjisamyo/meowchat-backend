@@ -632,6 +632,13 @@ async function initDatabase() {
       is_active = excluded.is_active
   `);
 
+  // Set Stripe live price IDs for paid plans
+  await db.exec(`
+    UPDATE plans SET stripe_price_id = 'price_1TQ0YNAynGlFAOFf5UtX4Q4D' WHERE id = 2;
+    UPDATE plans SET stripe_price_id = 'price_1TQ0YOAynGlFAOFfC9G3zOUu' WHERE id = 3;
+    UPDATE plans SET stripe_price_id = 'price_1TQ0YOAynGlFAOFfNhLQa64Y' WHERE id = 4;
+  `);
+
   // Auto-promote ADMIN_EMAIL to admin role if set
   if (process.env.ADMIN_EMAIL) {
     await db.run(
