@@ -526,6 +526,36 @@ app.post('/api/internal/bot-order', async (req, res) => {
   }
 });
 
+// ─── Internal: Customer confirms order via LINE postback ─────────────────────
+app.post('/api/internal/confirm-order', async (req, res) => {
+  const key = req.headers['x-internal-key'];
+  if (!key || key !== process.env.INTERNAL_API_KEY) return res.status(401).json({ error: 'unauthorized' });
+
+  const { orderNumber, botId } = req.body;
+  if (!orderNumber || !botId) return res.status(400).json({ error: 'orderNumber and botId required' });
+
+  try {
+    const { getDb } = require('./db');
+    const db = getDb();
+    const order = await db.get(
+      `SELECT id, status FROM orders WHERE order_number = ? AND shop_id = ? LIMIT 1`,
+      [orderNumber, botId]
+    );
+    if (!order) return res.status(404).json({ error: 'order not found' });
+    if (order.status === 'confirmed') return res.json({ ok: true, alreadyConfirmed: true });
+
+    const now = new Date().toISOString();
+    await db.run(
+      `UPDATE orders SET status = 'confirmed', updated_at = ? WHERE id = ?`,
+      [now, order.id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[internal/confirm-order] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Internal: Product Image Lookup ──────────────────────────────────────────
 app.get('/api/internal/product-image', async (req, res) => {
   const key = req.headers['x-internal-key'];
