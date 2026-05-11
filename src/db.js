@@ -647,8 +647,9 @@ async function initDatabase() {
     );
   }
 
-  // Ensure demo accounts are 'user' role for realistic merchant experience
-  const demoUsers = ['omise_test@meowchat.store', 'god@meowchat.store'];
+  // Keep only the generic demo account as 'user'.
+  // god@meowchat.store is used as the owner/admin analytics sandbox.
+  const demoUsers = ['omise_test@meowchat.store'];
   for (const email of demoUsers) {
     await db.run(
       `UPDATE users SET role = 'user' WHERE email = ?`,
@@ -690,6 +691,25 @@ async function initDatabase() {
   } catch (e) {
     console.warn('[migration] plan fix skipped:', e.message);
   }
+
+  // Blog articles table
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS blog_articles (
+      id SERIAL PRIMARY KEY,
+      slug TEXT UNIQUE NOT NULL,
+      title TEXT NOT NULL,
+      meta_title TEXT,
+      meta_description TEXT,
+      category TEXT NOT NULL DEFAULT 'คู่มือ',
+      reading_time TEXT DEFAULT '5 นาที',
+      excerpt TEXT,
+      content TEXT,
+      keywords TEXT DEFAULT '[]',
+      published BOOLEAN DEFAULT false,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 
   console.log('✅ Database initialized successfully');
 }

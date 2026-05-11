@@ -176,6 +176,7 @@ const { router: handoffsRouter, broadcastHandoffEvent } = require('./routes/hand
 const { pushToLine } = require('./utils/line-push');
 app.use('/api/handoffs', handoffsRouter);
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/blog', require('./routes/blog'));
 app.use('/api/referral', require('./routes/referral'));
 app.use('/api/credits', authMiddleware, require('./routes/credits'));
 
