@@ -1029,32 +1029,28 @@ initDatabase()
     // ── Facebook cron: auto-generate drafts every Monday 8am ────
     setInterval(async () => {
       try {
-        const anthropicKey = process.env.ANTHROPIC_API_KEY;
-        if (!anthropicKey) return;
+        const geminiKey = process.env.GEMINI_API_KEY;
+        if (!geminiKey) return;
         const now = new Date();
         if (now.getDay() !== 1 || now.getHours() !== 8) return; // Monday 8am only
         const db = getDb();
         const pending = await db.get(`SELECT COUNT(*) as cnt FROM facebook_posts WHERE status='draft'`);
         if (pending?.cnt > 3) return;
         console.log('[fb-cron] auto-generating weekly drafts...');
-        const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': anthropicKey,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
-            model: 'claude-haiku-4-5-20251001',
-            max_tokens: 1024,
-            messages: [{
-              role: 'user',
-              content: 'สร้าง 3 โพส Facebook ภาษาไทยสำหรับ MeowChat (AI Chatbot LINE OA สำหรับ SME ไทย) ที่หลากหลาย: 1. ให้ความรู้ 2. social proof 3. offer ทดลองฟรี 14 วัน ความยาว 100-200 คำ ไม่เกิน 5 emoji ตอบ JSON array: [{"title":"...","content":"...","notes":"..."}]',
-            }],
-          }),
-        });
+        const aiRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{
+                parts: [{ text: 'สร้าง 3 โพส Facebook ภาษาไทยสำหรับ MeowChat (AI Chatbot LINE OA สำหรับ SME ไทย) ที่หลากหลาย: 1. ให้ความรู้ 2. social proof 3. offer ทดลองฟรี 14 วัน ความยาว 100-200 คำ ไม่เกิน 5 emoji ตอบ JSON array: [{"title":"...","content":"...","notes":"..."}]' }],
+              }],
+            }),
+          }
+        );
         const aiData = await aiRes.json();
-        const raw = aiData?.content?.[0]?.text || '';
+        const raw = aiData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
         const match = raw.match(/\[[\s\S]*\]/);
         if (!match) return;
         const drafts = JSON.parse(match[0]);

@@ -7,7 +7,7 @@ const router = express.Router();
 const FB_API = 'https://graph.facebook.com/v21.0';
 const PAGE_ID = () => process.env.FB_PAGE_ID;
 const PAGE_TOKEN = () => process.env.FB_PAGE_TOKEN;
-const ANTHROPIC_KEY = () => process.env.ANTHROPIC_API_KEY;
+const GEMINI_KEY = () => process.env.GEMINI_API_KEY;
 
 // ── Helpers ────────────────────────────────────────────────────
 
@@ -30,24 +30,18 @@ async function fbGet(path, params = {}) {
   return data;
 }
 
-async function generateWithClaude(prompt) {
-  if (!ANTHROPIC_KEY()) throw new Error('ANTHROPIC_API_KEY not set');
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+async function generateWithGemini(prompt) {
+  if (!GEMINI_KEY()) throw new Error('GEMINI_API_KEY not set');
+  const model = 'gemini-2.0-flash';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY()}`;
+  const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_KEY(),
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1024,
-      messages: [{ role: 'user', content: prompt }],
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
   });
   const data = await res.json();
   if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-  return data.content[0].text;
+  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 }
 
 // ── List posts ─────────────────────────────────────────────────
@@ -177,7 +171,7 @@ router.post('/ai/generate', authMiddleware, requireAdmin, async (req, res) => {
   ...
 ]`;
 
-    const raw = await generateWithClaude(prompt);
+    const raw = await generateWithGemini(prompt);
 
     // Extract JSON from response
     const match = raw.match(/\[[\s\S]*\]/);
@@ -346,7 +340,7 @@ ${perfContext}
 ตอบ JSON array เท่านั้น:
 [{ "title": "...", "content": "...", "notes": "..." }, ...]`;
 
-    const raw = await generateWithClaude(prompt);
+    const raw = await generateWithGemini(prompt);
     const match = raw.match(/\[[\s\S]*\]/);
     if (!match) throw new Error('AI response not parseable');
     const drafts = JSON.parse(match[0]);
