@@ -711,6 +711,29 @@ async function initDatabase() {
     )
   `);
 
+  // Facebook posts table
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS facebook_posts (
+      id SERIAL PRIMARY KEY,
+      title TEXT,
+      content TEXT NOT NULL,
+      image_url TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      scheduled_at TIMESTAMP,
+      published_at TIMESTAMP,
+      fb_post_id TEXT,
+      likes INTEGER DEFAULT 0,
+      comments INTEGER DEFAULT 0,
+      shares INTEGER DEFAULT 0,
+      reach INTEGER DEFAULT 0,
+      source TEXT DEFAULT 'manual',
+      performance_score REAL DEFAULT 0,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   console.log('✅ Database initialized successfully');
 }
 

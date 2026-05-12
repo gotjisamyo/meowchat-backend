@@ -177,6 +177,7 @@ const { pushToLine } = require('./utils/line-push');
 app.use('/api/handoffs', handoffsRouter);
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/blog', require('./routes/blog'));
+app.use('/api/facebook', require('./routes/facebook'));
 app.use('/api/referral', require('./routes/referral'));
 app.use('/api/credits', authMiddleware, require('./routes/credits'));
 
@@ -985,6 +986,89 @@ initDatabase()
         console.error('[startup] admin seed error:', e.message);
       }
     }
+
+    // ── Facebook cron: publish scheduled posts every 5 min ──────
+    setInterval(async () => {
+      try {
+        const pageToken = process.env.FB_PAGE_TOKEN;
+        const pageId = process.env.FB_PAGE_ID;
+        if (!pageToken || !pageId) return;
+        const db = getDb();
+        const now = new Date().toISOString();
+        const due = await db.all(
+          `SELECT * FROM facebook_posts WHERE status='scheduled' AND scheduled_at <= $1 LIMIT 5`,
+          [now]
+        );
+        for (const post of due) {
+          try {
+            const r = await fetch(`https://graph.facebook.com/v21.0/${pageId}/feed`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: post.content, access_token: pageToken }),
+            });
+            const data = await r.json();
+            if (data.error) throw new Error(data.error.message);
+            await db.run(
+              `UPDATE facebook_posts SET status='published', fb_post_id=$1, published_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=$2`,
+              [data.id, post.id]
+            );
+            console.log(`[fb-cron] published post id=${post.id} fb=${data.id}`);
+          } catch (err) {
+            await db.run(
+              `UPDATE facebook_posts SET status='failed', notes=$1, updated_at=CURRENT_TIMESTAMP WHERE id=$2`,
+              [`Auto-publish error: ${err.message}`, post.id]
+            );
+            console.error(`[fb-cron] post id=${post.id} failed:`, err.message);
+          }
+        }
+      } catch (err) {
+        console.error('[fb-cron] scheduler error:', err.message);
+      }
+    }, 5 * 60 * 1000); // every 5 minutes
+
+    // ── Facebook cron: auto-generate drafts every Monday 8am ────
+    setInterval(async () => {
+      try {
+        const anthropicKey = process.env.ANTHROPIC_API_KEY;
+        if (!anthropicKey) return;
+        const now = new Date();
+        if (now.getDay() !== 1 || now.getHours() !== 8) return; // Monday 8am only
+        const db = getDb();
+        const pending = await db.get(`SELECT COUNT(*) as cnt FROM facebook_posts WHERE status='draft'`);
+        if (pending?.cnt > 3) return;
+        console.log('[fb-cron] auto-generating weekly drafts...');
+        const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': anthropicKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 1024,
+            messages: [{
+              role: 'user',
+              content: 'สร้าง 3 โพส Facebook ภาษาไทยสำหรับ MeowChat (AI Chatbot LINE OA สำหรับ SME ไทย) ที่หลากหลาย: 1. ให้ความรู้ 2. social proof 3. offer ทดลองฟรี 14 วัน ความยาว 100-200 คำ ไม่เกิน 5 emoji ตอบ JSON array: [{"title":"...","content":"...","notes":"..."}]',
+            }],
+          }),
+        });
+        const aiData = await aiRes.json();
+        const raw = aiData?.content?.[0]?.text || '';
+        const match = raw.match(/\[[\s\S]*\]/);
+        if (!match) return;
+        const drafts = JSON.parse(match[0]);
+        for (const d of drafts) {
+          await db.run(
+            `INSERT INTO facebook_posts (title, content, notes, source, status) VALUES ($1, $2, $3, 'ai-auto', 'draft')`,
+            [d.title || null, d.content, d.notes || null]
+          );
+        }
+        console.log(`[fb-cron] auto-generated ${drafts.length} drafts`);
+      } catch (err) {
+        console.error('[fb-cron] auto-generate error:', err.message);
+      }
+    }, 60 * 60 * 1000); // check every hour (only runs on Monday 8am)
   })
   .catch(err => {
     console.error('❌ DB init failed:', err.message || err.code || String(err));
