@@ -711,6 +711,20 @@ async function initDatabase() {
     )
   `);
 
+  // LINE order carts — pending confirmations from chat
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS line_carts (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      line_user_id TEXT NOT NULL,
+      items TEXT NOT NULL DEFAULT '[]',
+      total_amount REAL DEFAULT 0,
+      state TEXT DEFAULT 'awaiting_confirm',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   // Facebook posts table
   await db.exec(`
     CREATE TABLE IF NOT EXISTS facebook_posts (

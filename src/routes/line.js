@@ -198,6 +198,101 @@ async function saveConversationTurn(shopId, lineUserId, userText, botReply, esca
   );
 }
 
+// ─── Order helpers ────────────────────────────────────────────────────────────
+
+const CONFIRM_PATTERNS = /^(ใช่|ยืนยัน|confirm|yes|ตกลง|ok|โอเค|สั่งเลย|เอาเลย|ใช้เลย)$/i;
+const CANCEL_PATTERNS  = /^(ไม่|ยกเลิก|cancel|no|ไม่เอา|ไม่สั่ง)$/i;
+
+// Use Gemini to detect order intent and extract items
+async function detectOrder(userMessage, products) {
+  if (!process.env.GEMINI_API_KEY || products.length === 0) return null;
+
+  const productList = products.map(p =>
+    `id:${p.id}|name:${p.name}|price:${p.price}|stock:${p.stock ?? 999}`
+  ).join('\n');
+
+  const prompt = `สินค้าในร้าน:\n${productList}\n\nข้อความลูกค้า: "${userMessage}"\n\nลูกค้าต้องการสั่งสินค้าไหม? ถ้าใช่ให้ตอบ JSON เท่านั้น ถ้าไม่ใช่ให้ตอบ null เท่านั้น\n\nJSON format: [{"id":"product_id","name":"ชื่อ","qty":จำนวน,"price":ราคา}]\n\nอย่าตอบอะไรนอกจาก JSON array หรือ null`;
+
+  try {
+    const resp = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0, maxOutputTokens: 256 } }
+    );
+    const raw = resp.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+    if (!raw || raw === 'null') return null;
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) return null;
+    const items = JSON.parse(match[0]);
+    if (!Array.isArray(items) || items.length === 0) return null;
+    // Validate items against real products
+    const validated = items.map(item => {
+      const product = products.find(p =>
+        p.id === item.id || p.name.toLowerCase() === (item.name || '').toLowerCase()
+      );
+      if (!product) return null;
+      const qty = Math.max(1, parseInt(item.qty) || 1);
+      const stock = product.stock ?? 999;
+      if (stock < qty) return { ...item, productId: product.id, name: product.name, qty, price: Number(product.price), outOfStock: true };
+      return { productId: product.id, name: product.name, qty, price: Number(product.price) };
+    }).filter(Boolean);
+    return validated.length > 0 ? validated : null;
+  } catch (err) {
+    console.error('[order-detect] error:', err.message);
+    return null;
+  }
+}
+
+// Create order directly from LINE (no auth middleware)
+async function createInternalOrder(db, shopId, lineUserId, items) {
+  const orderId = 'ord_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+  const orderNumber = 'ORD-' + Date.now();
+  const now = new Date().toISOString();
+  let total = 0;
+  const orderItems = [];
+
+  for (const item of items) {
+    const inv = await db.get(
+      'SELECT * FROM inventory WHERE shop_id = ? AND product_id = ?',
+      [shopId, item.productId]
+    );
+    const qty = item.qty;
+
+    if (inv && inv.quantity >= qty) {
+      await db.run(
+        'UPDATE inventory SET quantity = quantity - ?, updated_at = ? WHERE id = ?',
+        [qty, now, inv.id]
+      );
+      const movId = 'mov_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      await db.run(
+        `INSERT INTO stock_movements (id,inventory_id,product_id,shop_id,type,quantity,reference,notes,created_by,created_at)
+         VALUES (?,?,?,?,'out',?,?,?,'line_order',?)`,
+        [movId, inv.id, item.productId, shopId, qty, orderNumber, `LINE ${lineUserId}`, now]
+      );
+      // Low stock alert
+      const updated = await db.get('SELECT quantity, min_stock_level FROM inventory WHERE id = ?', [inv.id]);
+      if (updated && updated.quantity <= (updated.min_stock_level || 0)) {
+        const alertId = 'alert_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        await db.run(
+          `INSERT INTO stock_alerts (id,shop_id,product_id,type,created_at) VALUES (?,?,?,?,?)
+           ON CONFLICT (id) DO NOTHING`,
+          [alertId, shopId, item.productId, updated.quantity <= 0 ? 'out_of_stock' : 'low_stock', now]
+        );
+      }
+    }
+
+    total += item.price * qty;
+    orderItems.push({ productId: item.productId, productName: item.name, quantity: qty, price: item.price });
+  }
+
+  await db.run(
+    `INSERT INTO orders (id,shop_id,order_number,status,items,total_amount,note,created_at,updated_at)
+     VALUES (?,?,?,'pending',?,?,?,?,?)`,
+    [orderId, shopId, orderNumber, JSON.stringify(orderItems), total, `LINE: ${lineUserId}`, now, now]
+  );
+
+  return { orderId, orderNumber, orderItems, total };
+}
+
 // ─── Process a single LINE event ──────────────────────────────────────────────
 
 async function processEvent(event, shop, products, knowledgeBase) {
@@ -235,6 +330,73 @@ async function processEvent(event, shop, products, knowledgeBase) {
       return;
     }
   }
+
+  // ── Order cart flow ──────────────────────────────────────────────────────────
+  const db = getDb();
+  const cart = await db.get(
+    `SELECT * FROM line_carts WHERE shop_id = ? AND line_user_id = ? AND state = 'awaiting_confirm' ORDER BY created_at DESC LIMIT 1`,
+    [shop.id, userId]
+  ).catch(() => null);
+
+  if (cart) {
+    if (CONFIRM_PATTERNS.test(userText)) {
+      // Customer confirmed → create order
+      const items = JSON.parse(cart.items || '[]');
+      try {
+        const { orderNumber, orderItems, total } = await createInternalOrder(db, shop.id, userId, items);
+        await db.run(`UPDATE line_carts SET state='confirmed', updated_at=? WHERE id=?`, [new Date().toISOString(), cart.id]);
+        const receipt = `✅ สั่งสินค้าสำเร็จแล้วค่ะ!\n\n` +
+          `🧾 เลขที่: ${orderNumber}\n` +
+          orderItems.map(i => `• ${i.productName} x${i.quantity} = ฿${(i.price * i.quantity).toLocaleString()}`).join('\n') +
+          `\n\n💰 รวมทั้งหมด: ฿${total.toLocaleString()}\nทางร้านจะเตรียมของให้เร็วๆ นี้นะคะ 🐱`;
+        await replyToLine(replyToken, receipt, shop.line_access_token);
+        await saveConversationTurn(shop.id, userId, userText, receipt, false).catch(() => {});
+        return;
+      } catch (err) {
+        console.error('[order-create]', err.message);
+        await replyToLine(replyToken, 'ขออภัยค่ะ เกิดข้อผิดพลาดในการสั่งสินค้า กรุณาลองใหม่นะคะ', shop.line_access_token);
+        return;
+      }
+    }
+
+    if (CANCEL_PATTERNS.test(userText)) {
+      await db.run(`UPDATE line_carts SET state='cancelled', updated_at=? WHERE id=?`, [new Date().toISOString(), cart.id]);
+      await replyToLine(replyToken, 'ยกเลิกคำสั่งซื้อเรียบร้อยแล้วค่ะ 😊 มีอะไรให้ช่วยอีกไหมคะ?', shop.line_access_token);
+      await saveConversationTurn(shop.id, userId, userText, 'ยกเลิกคำสั่งซื้อ', false).catch(() => {});
+      return;
+    }
+    // If neither confirm/cancel → let AI handle but keep cart alive
+  }
+
+  // ── Detect new order intent (only if no pending cart) ─────────────────────
+  if (!cart && products.length > 0) {
+    const orderItems = await detectOrder(userText, products);
+    if (orderItems) {
+      const outOfStock = orderItems.filter(i => i.outOfStock);
+      if (outOfStock.length > 0) {
+        const names = outOfStock.map(i => i.name).join(', ');
+        await replyToLine(replyToken, `ขออภัยค่ะ สินค้า ${names} หมดแล้วนะคะ 😿 มีอะไรอื่นให้ช่วยไหมคะ?`, shop.line_access_token);
+        await saveConversationTurn(shop.id, userId, userText, `สินค้า ${names} หมด`, false).catch(() => {});
+        return;
+      }
+
+      const validItems = orderItems.filter(i => !i.outOfStock);
+      const total = validItems.reduce((s, i) => s + i.price * i.qty, 0);
+      const cartId = 'cart_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+      await db.run(
+        `INSERT INTO line_carts (id,shop_id,line_user_id,items,total_amount,state,created_at,updated_at) VALUES (?,?,?,?,?,'awaiting_confirm',?,?)`,
+        [cartId, shop.id, userId, JSON.stringify(validItems), total, new Date().toISOString(), new Date().toISOString()]
+      ).catch(e => console.error('[cart save]', e.message));
+
+      const confirm = `🛒 สรุปรายการสั่งซื้อค่ะ\n\n` +
+        validItems.map(i => `• ${i.name} x${i.qty} = ฿${(i.price * i.qty).toLocaleString()}`).join('\n') +
+        `\n\n💰 รวม: ฿${total.toLocaleString()}\n\nยืนยันสั่งซื้อไหมคะ? (พิมพ์ "ยืนยัน" หรือ "ยกเลิก")`;
+      await replyToLine(replyToken, confirm, shop.line_access_token);
+      await saveConversationTurn(shop.id, userId, userText, confirm, false).catch(() => {});
+      return;
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────────
 
   const escalated = isEscalation(userText);
 
