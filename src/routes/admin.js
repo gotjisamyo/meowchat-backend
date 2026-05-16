@@ -2,6 +2,8 @@ const express = require('express');
 const { getDb } = require('../db');
 const { authMiddleware, requireAdmin } = require('../auth');
 const { EVENTS } = require('../events');
+const { sendBillingSuccessEmail } = require('../utils/email');
+const { applyReferralReward } = require('./referral');
 
 const router = express.Router();
 
@@ -307,29 +309,22 @@ router.post('/payments/:id/approve', async (req, res) => {
       }
       console.log(`[admin] approved payment id=${req.params.id} → unlocked shop=${payment.shop_id} plan_id=${resolvedPlanId}`);
 
-      // Trigger referral reward on first paid payment
-      const paymentCount = await db.get(
-        `SELECT COUNT(*) as cnt FROM payment_notifications WHERE shop_id = ? AND status = 'approved'`,
+      // Trigger referral reward + email (fire-and-forget)
+      applyReferralReward(payment.shop_id).catch(e => console.error('[referral] reward error:', e.message));
+
+      const shopInfo = await db.get(
+        `SELECT s.name, u.email, u.name as owner_name FROM shops s JOIN users u ON u.id = s.user_id WHERE s.id = ?`,
         [payment.shop_id]
-      );
-      if (paymentCount.cnt === 1) {
-        const conversion = await db.get(
-          `SELECT * FROM referral_conversions WHERE referred_shop_id = ? AND rewarded = FALSE`,
-          [payment.shop_id]
-        );
-        if (conversion) {
-          const referrerShop = await db.get('SELECT * FROM shops WHERE id = ?', [conversion.referrer_shop_id]);
-          if (referrerShop) {
-            const base = referrerShop.trial_ends_at ? new Date(referrerShop.trial_ends_at) : new Date();
-            const newEndsAt = new Date(base.getTime() + 30 * 24 * 60 * 60 * 1000);
-            await db.run(
-              `UPDATE shops SET trial_ends_at = ?, subscription_status = 'trial', bot_locked = FALSE, trial_reminder_sent = FALSE WHERE id = ?`,
-              [newEndsAt.toISOString(), conversion.referrer_shop_id]
-            );
-            await db.run('UPDATE referral_conversions SET rewarded = TRUE WHERE id = ?', [conversion.id]);
-            console.log(`[referral] reward: referrer=${conversion.referrer_shop_id} (from referred=${payment.shop_id})`);
-          }
-        }
+      ).catch(() => null);
+      const planInfo = await db.get('SELECT name, price FROM plans WHERE id = ?', [resolvedPlanId]).catch(() => null);
+      if (shopInfo?.email) {
+        sendBillingSuccessEmail({
+          to: shopInfo.email,
+          name: shopInfo.owner_name,
+          planName: planInfo?.name || 'แผนที่เลือก',
+          amount: payment.amount || planInfo?.price,
+          billingPeriod: 'bank_transfer',
+        }).catch(e => console.error('[email] billing success:', e.message));
       }
     }
 

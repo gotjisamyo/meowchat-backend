@@ -4,6 +4,7 @@ const axios = require('axios');
 const { getDb } = require('../db');
 const { updateUsage } = require('./billing');
 const { pushToLine } = require('../utils/line-push');
+const { sendEscalationEmail } = require('../utils/email');
 
 const router = express.Router();
 
@@ -433,7 +434,8 @@ async function processEvent(event, shop, products, knowledgeBase) {
 
     // Push LINE notification to merchant if they have paired their LINE
     const shopForNotify = await db.get(
-      'SELECT owner_line_user_id, line_access_token FROM shops WHERE id = ?',
+      `SELECT s.owner_line_user_id, s.line_access_token, s.name as shop_name, u.email as owner_email
+       FROM shops s LEFT JOIN users u ON u.id = s.user_id WHERE s.id = ?`,
       [shop.id]
     ).catch(() => null);
     if (shopForNotify?.owner_line_user_id && shopForNotify?.line_access_token) {
@@ -442,6 +444,15 @@ async function processEvent(event, shop, products, knowledgeBase) {
         `🔔 ลูกค้าขอคุยกับพนักงาน!\nลูกค้า: ${customerName || userId}\nข้อความ: "${userText}"\n\n👉 my.meowchat.store`,
         shopForNotify.line_access_token
       );
+    }
+    // Email backup — always send if merchant has email
+    if (shopForNotify?.owner_email) {
+      sendEscalationEmail({
+        to: shopForNotify.owner_email,
+        shopName: shopForNotify.shop_name,
+        customerName: customerName || userId,
+        message: userText,
+      }).catch(e => console.error('[email] escalation:', e.message));
     }
     console.log(`[LINE] escalation detected shopId=${shop.id} userId=${userId}`);
   } else if (process.env.GEMINI_API_KEY || ENGINE_ADMIN_KEY) {

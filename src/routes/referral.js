@@ -138,10 +138,33 @@ router.post('/convert', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /api/referral/reward — called internally when referred shop upgrades to paid
-// Extends referrer's subscription by 30 days
+// Shared logic — also called directly from billing.js on Stripe payment success
+async function applyReferralReward(referredShopId) {
+  const db = getDb();
+  const conversion = await db.get(
+    'SELECT * FROM referral_conversions WHERE referred_shop_id = ? AND rewarded = FALSE',
+    [referredShopId]
+  );
+  if (!conversion) return false;
+
+  const referrerShop = await db.get('SELECT * FROM shops WHERE id = ?', [conversion.referrer_shop_id]);
+  if (referrerShop) {
+    const base = referrerShop.trial_ends_at ? new Date(referrerShop.trial_ends_at) : new Date();
+    const newEndsAt = new Date(base.getTime() + 30 * 24 * 60 * 60 * 1000);
+    await db.run(
+      `UPDATE shops SET trial_ends_at = ?, subscription_status = 'trial', bot_locked = FALSE, trial_reminder_sent = FALSE WHERE id = ?`,
+      [newEndsAt.toISOString(), conversion.referrer_shop_id]
+    );
+    console.log(`[referral] shop=${referrerShop.id} (${referrerShop.name}) extended to ${newEndsAt.toLocaleDateString('th-TH')}`);
+  }
+
+  await db.run('UPDATE referral_conversions SET rewarded = TRUE WHERE id = ?', [conversion.id]);
+  console.log(`[referral] rewarded referrer=${conversion.referrer_shop_id}`);
+  return true;
+}
+
+// POST /api/referral/reward — internal HTTP endpoint (kept for manual calls)
 router.post('/reward', async (req, res) => {
-  // Internal-only: require INTERNAL_API_KEY header
   const key = req.headers['x-internal-key'];
   if (!key || key !== process.env.INTERNAL_API_KEY) {
     return res.status(401).json({ error: 'unauthorized' });
@@ -149,30 +172,8 @@ router.post('/reward', async (req, res) => {
   try {
     const { referred_shop_id } = req.body;
     if (!referred_shop_id) return res.status(400).json({ error: 'referred_shop_id required' });
-    const db = getDb();
-
-    const conversion = await db.get(
-      'SELECT * FROM referral_conversions WHERE referred_shop_id = ? AND rewarded = FALSE',
-      [referred_shop_id]
-    );
-    if (!conversion) return res.json({ ok: true, no_pending_reward: true });
-
-    // Extend referrer's trial by 30 days
-    const referrerShop = await db.get('SELECT * FROM shops WHERE id = ?', [conversion.referrer_shop_id]);
-    if (referrerShop) {
-      const base = referrerShop.trial_ends_at ? new Date(referrerShop.trial_ends_at) : new Date();
-      const newEndsAt = new Date(base.getTime() + 30 * 24 * 60 * 60 * 1000);
-      await db.run(
-        `UPDATE shops SET trial_ends_at = ?, subscription_status = 'trial', bot_locked = FALSE, trial_reminder_sent = FALSE WHERE id = ?`,
-        [newEndsAt.toISOString(), conversion.referrer_shop_id]
-      );
-
-      console.log(`[referral] shop=${referrerShop.id} (${referrerShop.name}) extended to ${newEndsAt.toLocaleDateString('th-TH')}`);
-    }
-
-    await db.run('UPDATE referral_conversions SET rewarded = TRUE WHERE id = ?', [conversion.id]);
-    console.log(`[referral] rewarded referrer=${conversion.referrer_shop_id}`);
-    res.json({ ok: true, rewarded: true });
+    const rewarded = await applyReferralReward(referred_shop_id);
+    res.json({ ok: true, rewarded });
   } catch (err) {
     console.error('Referral reward error:', err);
     res.status(500).json({ error: err.message });
@@ -180,3 +181,4 @@ router.post('/reward', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.applyReferralReward = applyReferralReward;

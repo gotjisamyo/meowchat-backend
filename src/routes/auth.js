@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
 const { getDb } = require('../db');
 const { generateToken, authMiddleware } = require('../auth');
+const { sendWelcomeEmail } = require('../utils/email');
 
 const router = express.Router();
 
@@ -70,6 +71,8 @@ router.post('/register', registerLimiter, async (req, res) => {
     );
 
     const token = generateToken(result.lastInsertRowid, 'user');
+
+    sendWelcomeEmail({ to: email, name }).catch(e => console.error('[email] welcome:', e.message));
 
     res.status(201).json({
       message: 'สมัครสมาชิกสำเร็จ',

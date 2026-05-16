@@ -2,6 +2,8 @@ const Stripe = require('stripe');
 const { getDb } = require('../db');
 const { authMiddleware } = require('../auth');
 const { requireOwnedShop } = require('../middleware/shopAccess');
+const { sendBillingSuccessEmail } = require('../utils/email');
+const { applyReferralReward } = require('./referral');
 
 const SUBSCRIPTION_STATUS = {
   PENDING: 'pending',
@@ -283,6 +285,28 @@ async function activateSubscriptionFromStripe({
     `UPDATE shops SET bot_locked = FALSE, subscription_status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
     [shopId]
   );
+
+  // Fire-and-forget: email receipt + referral reward
+  (async () => {
+    try {
+      const shop = await db.get(
+        `SELECT s.name, u.email, u.name as owner_name FROM shops s JOIN users u ON u.id = s.user_id WHERE s.id = ?`,
+        [shopId]
+      );
+      if (shop?.email) {
+        await sendBillingSuccessEmail({
+          to: shop.email,
+          name: shop.owner_name,
+          planName: plan.name,
+          amount: plan.price,
+          billingPeriod: paymentMethod,
+        });
+      }
+      await applyReferralReward(shopId).catch(e => console.error('[referral] reward error:', e.message));
+    } catch (e) {
+      console.error('[billing] post-activate hooks error:', e.message);
+    }
+  })();
 
   return getSubscription(shopId);
 }
