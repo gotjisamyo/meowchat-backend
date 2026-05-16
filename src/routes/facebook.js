@@ -83,7 +83,7 @@ async function generateSalesImage(imagePrompt, thaiText) {
     ? `${imagePrompt}. The image must prominently include Thai text: "${thaiText}" — use clean, modern Thai typography, large and readable.`
     : imagePrompt;
 
-  const model = 'gemini-2.0-flash-preview-image-generation';
+  const model = 'gemini-2.5-flash-image';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY()}`;
 
   const res = await fetch(url, {
