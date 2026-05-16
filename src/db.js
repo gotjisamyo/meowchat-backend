@@ -764,6 +764,9 @@ async function initDatabase() {
   // Add promo_code column to users if not exists (IF NOT EXISTS requires PG 9.6+)
   try { await db.exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS promo_code TEXT`); } catch (_) {}
 
+  // Add image_analysis column to facebook_posts for AI sales analysis
+  try { await db.exec(`ALTER TABLE facebook_posts ADD COLUMN IF NOT EXISTS image_analysis TEXT`); } catch (_) {}
+
   console.log('✅ Database initialized successfully');
 }
 

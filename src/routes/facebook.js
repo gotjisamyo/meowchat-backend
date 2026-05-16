@@ -44,6 +44,85 @@ async function generateWithGemini(prompt) {
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 }
 
+// Analyze post → determine what sales-oriented visual would work best
+async function analyzePostForSalesImage(content) {
+  const prompt = `คุณคือ Creative Director ที่เชี่ยวชาญด้าน Social Media Marketing สำหรับ SME ไทย
+
+วิเคราะห์โพส Facebook นี้แล้วบอกว่าภาพแบบไหนจะช่วยให้โพสนี้ขายได้ดีขึ้น:
+
+โพส:
+"${content}"
+
+วิเคราะห์ให้ครบ:
+1. โพสนี้กำลังขายอะไร / แก้ปัญหาอะไร?
+2. กลุ่มเป้าหมายคือใคร (เจ้าของร้านอาหาร/คลินิก/ร้านค้าออนไลน์)?
+3. ภาพแบบไหนจะทำให้คนหยุดดูและรู้สึกว่า "นี่แหละคือสิ่งที่ฉันต้องการ"?
+4. ถ้ามีข้อความในรูป ควรเป็นอะไร (สั้น กระชับ ≤8 คำ)?
+
+ตอบ JSON เท่านั้น ไม่มีข้อความอื่น:
+{
+  "selling_point": "โพสนี้ขาย/แก้ปัญหาอะไร",
+  "target": "กลุ่มเป้าหมาย",
+  "image_concept": "แนวคิดภาพที่จะช่วยขาย",
+  "image_prompt": "prompt ภาษาอังกฤษ สำหรับ Gemini Image Gen — รายละเอียด visual, style, mood, composition, ห้ามแค่พูด concept",
+  "thai_text": "ข้อความภาษาไทยในรูป ≤8 คำ (หรือ null ถ้าไม่จำเป็น)",
+  "rationale": "เหตุผลสั้นๆ ว่าทำไม visual นี้ถึงช่วยขาย"
+}`;
+
+  const raw = await generateWithGemini(prompt);
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('Cannot parse image analysis from AI');
+  return JSON.parse(match[0]);
+}
+
+// Generate sales image using Gemini 2.0 Flash image generation
+async function generateSalesImage(imagePrompt, thaiText) {
+  if (!GEMINI_KEY()) throw new Error('GEMINI_API_KEY not set');
+
+  const fullPrompt = thaiText
+    ? `${imagePrompt}. The image must prominently include Thai text: "${thaiText}" — use clean, modern Thai typography, large and readable.`
+    : imagePrompt;
+
+  const model = 'gemini-2.0-flash-preview-image-generation';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY()}`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: fullPrompt }] }],
+      generationConfig: { responseModalities: ['IMAGE'] },
+    }),
+  });
+
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+
+  const imagePart = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+  if (!imagePart) throw new Error('No image returned from Gemini');
+
+  return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
+}
+
+// Upload base64 image to Facebook, return photo_id (for attaching to feed post)
+async function uploadImageToFacebook(base64DataUrl) {
+  const matches = base64DataUrl.match(/^data:(.+);base64,(.+)$/);
+  if (!matches) throw new Error('Invalid base64 data URL');
+  const mimeType = matches[1];
+  const buffer = Buffer.from(matches[2], 'base64');
+
+  const { FormData, Blob } = await import('node:buffer').then(() => globalThis).catch(() => require('buffer'));
+  const form = new FormData();
+  form.append('source', new Blob([buffer], { type: mimeType }), 'image.jpg');
+  form.append('published', 'false');
+  form.append('access_token', PAGE_TOKEN());
+
+  const res = await fetch(`${FB_API}/${PAGE_ID()}/photos`, { method: 'POST', body: form });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  return data.id;
+}
+
 // ── List posts ─────────────────────────────────────────────────
 
 router.get('/', authMiddleware, requireAdmin, async (req, res) => {
@@ -195,6 +274,39 @@ router.post('/ai/generate', authMiddleware, requireAdmin, async (req, res) => {
   }
 });
 
+// ── AI: Generate sales image for a draft ──────────────────────
+
+router.post('/:id/generate-image', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const db = getDb();
+    const post = await db.get('SELECT * FROM facebook_posts WHERE id = $1', [req.params.id]);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+
+    // Step 1: Analyze post for sales-oriented image
+    console.log(`[fb] analyzing post ${post.id} for sales image...`);
+    const analysis = await analyzePostForSalesImage(post.content);
+    console.log(`[fb] analysis: ${JSON.stringify(analysis)}`);
+
+    // Step 2: Generate image
+    console.log(`[fb] generating image...`);
+    const imageDataUrl = await generateSalesImage(analysis.image_prompt, analysis.thai_text);
+
+    // Step 3: Save to DB
+    const updated = await db.get(`
+      UPDATE facebook_posts SET
+        image_url = $1,
+        image_analysis = $2,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $3 RETURNING *
+    `, [imageDataUrl, JSON.stringify(analysis), post.id]);
+
+    res.json({ post: updated, analysis });
+  } catch (err) {
+    console.error('[fb] generate-image error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Publish post immediately ───────────────────────────────────
 
 router.post('/:id/publish', authMiddleware, requireAdmin, async (req, res) => {
@@ -204,10 +316,20 @@ router.post('/:id/publish', authMiddleware, requireAdmin, async (req, res) => {
     if (!post) return res.status(404).json({ error: 'Post not found' });
     if (post.status === 'published') return res.status(400).json({ error: 'Already published' });
 
-    const fbBody = { message: post.content };
-    if (post.image_url) fbBody.link = post.image_url;
-
-    const result = await fbPost(`/${PAGE_ID()}/feed`, fbBody);
+    let fbResult;
+    if (post.image_url?.startsWith('data:')) {
+      // AI-generated image: upload to FB Photos first, then post feed with attached photo
+      const photoId = await uploadImageToFacebook(post.image_url);
+      fbResult = await fbPost(`/${PAGE_ID()}/feed`, {
+        message: post.content,
+        attached_media: [{ media_fbid: photoId }],
+      });
+    } else {
+      const fbBody = { message: post.content };
+      if (post.image_url) fbBody.link = post.image_url;
+      fbResult = await fbPost(`/${PAGE_ID()}/feed`, fbBody);
+    }
+    const result = fbResult;
 
     const updated = await db.get(`
       UPDATE facebook_posts SET
