@@ -91,8 +91,8 @@ function base({ preheader = '', body }) {
     <tr>
       <td style="
         background: #0D0B1E;
-        border-left: 1px solid rgba(49,195,106,0.12);
-        border-right: 1px solid rgba(49,195,106,0.12);
+        border-left: 1px solid rgba(49,195,106,0.15);
+        border-right: 1px solid rgba(49,195,106,0.15);
         padding: 36px 40px;
       ">
         ${body}
@@ -103,7 +103,9 @@ function base({ preheader = '', body }) {
     <tr>
       <td style="
         background: #080713;
-        border: 1px solid rgba(49,195,106,0.1);
+        border-left: 1px solid rgba(49,195,106,0.15);
+        border-right: 1px solid rgba(49,195,106,0.15);
+        border-bottom: 1px solid rgba(49,195,106,0.15);
         border-top: 1px solid rgba(255,255,255,0.05);
         border-radius: 0 0 20px 20px;
         padding: 24px 40px;
