@@ -76,36 +76,32 @@ async function analyzePostForSalesImage(content) {
   return JSON.parse(match[0]);
 }
 
-// Generate sales image using GPT Image (gpt-image-1)
+// Generate sales image using Imagen 3 (best Thai text quality)
 async function generateSalesImage(imagePrompt, thaiText) {
-  if (!OPENAI_KEY()) throw new Error('OPENAI_API_KEY not set');
+  if (!GEMINI_KEY()) throw new Error('GEMINI_API_KEY not set');
 
   const fullPrompt = thaiText
     ? `${imagePrompt}. Include bold Thai text "${thaiText}" prominently in the image — large, clean, modern typography.`
     : imagePrompt;
 
-  const res = await fetch('https://api.openai.com/v1/images/generations', {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${GEMINI_KEY()}`;
+
+  const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${OPENAI_KEY()}`,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'gpt-image-2',
-      prompt: fullPrompt,
-      n: 1,
-      size: '1024x1024',
-      quality: 'medium',
+      instances: [{ prompt: fullPrompt }],
+      parameters: { sampleCount: 1, aspectRatio: '1:1' },
     }),
   });
 
   const data = await res.json();
   if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
 
-  const b64 = data.data?.[0]?.b64_json;
-  if (!b64) throw new Error('No image returned from OpenAI');
+  const prediction = data.predictions?.[0];
+  if (!prediction?.bytesBase64Encoded) throw new Error('No image returned from Imagen 3');
 
-  return `data:image/png;base64,${b64}`;
+  return `data:${prediction.mimeType || 'image/png'};base64,${prediction.bytesBase64Encoded}`;
 }
 
 // Publish photo post directly to page (single step — avoids unpublished permission issue)
