@@ -91,7 +91,7 @@ async function generateSalesImage(imagePrompt, thaiText) {
       'Authorization': `Bearer ${OPENAI_KEY()}`,
     },
     body: JSON.stringify({
-      model: 'gpt-image-1',
+      model: 'gpt-image-2',
       prompt: fullPrompt,
       n: 1,
       size: '1024x1024',
