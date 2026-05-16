@@ -330,21 +330,7 @@ async function sendEscalationEmail({ to, shopName, customerName, message }) {
       preheader: `${customerName || 'ลูกค้า'} ส่งข้อความ: "${message?.slice(0, 60)}..."`,
       body: `
         <div style="margin-bottom:24px;">
-          <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
-            <tr>
-              <td style="
-                background:rgba(255,140,66,0.1);
-                border:1px solid rgba(255,140,66,0.25);
-                border-radius:8px;
-                padding:4px 12px;
-                color:#FF8C42;
-                font-size:12px;
-                font-weight:700;
-                letter-spacing:0.5px;
-                white-space:nowrap;
-              ">⚠️ ต้องการพนักงาน</td>
-            </tr>
-          </table>
+          <p style="margin:0 0 16px 0; line-height:2;"><span style="background:#261509; border:1px solid #FF8C42; border-radius:8px; padding:4px 14px; color:#FF8C42; font-size:12px; font-weight:700; letter-spacing:0.5px; white-space:nowrap;">⚠️&nbsp;ต้องการพนักงาน</span></p>
 
           <p style="color:#FFFFFF;font-size:18px;font-weight:700;margin-bottom:6px;">มีลูกค้าขอคุยกับพนักงานครับ</p>
           <p style="color:rgba(255,255,255,0.5);font-size:13px;">${now}</p>
