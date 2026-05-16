@@ -181,6 +181,19 @@ app.use('/api/facebook', require('./routes/facebook'));
 app.use('/api/referral', require('./routes/referral'));
 app.use('/api/credits', authMiddleware, require('./routes/credits'));
 
+const { publicRouter: promoPublic, adminRouter: promoAdmin } = require('./routes/promo');
+app.use('/api/promo', promoPublic);
+app.use('/api/admin/promo-codes', promoAdmin);
+
+// Short redirect: /r/CODE → register page with promo tracking
+app.get('/r/:code', async (req, res) => {
+  const code = (req.params.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20);
+  if (code) {
+    getDb().run('UPDATE promo_codes SET clicks = clicks + 1 WHERE code = ?', [code]).catch(() => {});
+  }
+  res.redirect(302, `https://my.meowchat.store/register?promo=${code}&utm_source=promo&utm_medium=influencer&utm_campaign=${code}`);
+});
+
 // Merchant dashboard routes
 const botsRouter = require('./routes/bots');
 const usageRouter = require('./routes/usage');

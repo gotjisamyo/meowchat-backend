@@ -24,7 +24,7 @@ const VALID_PLANS = ['starter', 'pro', 'business'];
 
 router.post('/register', registerLimiter, async (req, res) => {
   try {
-    const { email, password, name, shopName, plan, billing_period } = req.body;
+    const { email, password, name, shopName, plan, billing_period, promo_code } = req.body;
 
     if (!email || !password || !name) {
       return res.status(400).json({
@@ -63,12 +63,19 @@ router.post('/register', registerLimiter, async (req, res) => {
     const pendingBilling = billing_period === 'annual' ? 'annual' : 'monthly';
     const safeShopName = shopName ? shopName.replace(/<[^>]*>/g, '').trim().slice(0, 100) : null;
 
+    const safePromo = promo_code ? promo_code.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20) : null;
+
     const passwordHash = await bcrypt.hash(password, 10);
     const result = await db.run(
-      `INSERT INTO users (email, password_hash, name, company, pending_plan, pending_billing, role)
-       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-      [email, passwordHash, name, safeShopName, pendingPlan, pendingBilling, 'user']
+      `INSERT INTO users (email, password_hash, name, company, pending_plan, pending_billing, role, promo_code)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      [email, passwordHash, name, safeShopName, pendingPlan, pendingBilling, 'user', safePromo]
     );
+
+    if (safePromo) {
+      db.run('UPDATE promo_codes SET signups = signups + 1 WHERE code = ?', [safePromo])
+        .catch(e => console.error('[promo] signup count:', e.message));
+    }
 
     const token = generateToken(result.lastInsertRowid, 'user');
 

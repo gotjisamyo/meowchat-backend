@@ -750,6 +750,20 @@ async function initDatabase() {
     )
   `);
 
+  // Promo codes — for influencer / campaign tracking
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS promo_codes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT UNIQUE NOT NULL,
+      label TEXT NOT NULL,
+      clicks INTEGER DEFAULT 0,
+      signups INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  // Add promo_code column to users if not exists
+  try { await db.exec(`ALTER TABLE users ADD COLUMN promo_code TEXT`); } catch (_) {}
+
   console.log('✅ Database initialized successfully');
 }
 
