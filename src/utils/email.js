@@ -65,19 +65,22 @@ function base({ preheader = '', body }) {
         padding: 36px 40px 28px;
         text-align: center;
       ">
-        <!-- Logo mark -->
-        <div style="
-          display:inline-flex;
-          align-items:center;
-          justify-content:center;
-          width:52px; height:52px;
-          background: linear-gradient(135deg, #1a2e1e 0%, #0f1f14 100%);
-          border: 1.5px solid rgba(49,195,106,0.3);
-          border-radius: 14px;
-          margin-bottom: 14px;
-          font-size: 26px;
-          line-height: 1;
-        ">🐱</div>
+        <!-- Logo mark (table-based for email client compat) -->
+        <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 14px;">
+          <tr>
+            <td align="center" valign="middle" style="
+              width:52px; height:52px;
+              background: linear-gradient(135deg, #1a2e1e 0%, #0f1f14 100%);
+              border: 1.5px solid rgba(49,195,106,0.3);
+              border-radius: 14px;
+              font-size: 26px;
+              line-height: 52px;
+              mso-line-height-rule: exactly;
+              text-align: center;
+              vertical-align: middle;
+            ">🐱</td>
+          </tr>
+        </table>
 
         <div style="font-size:20px;font-weight:800;color:#FFFFFF;letter-spacing:-0.5px;">MeowChat</div>
         <div style="font-size:12px;color:rgba(255,255,255,0.35);margin-top:3px;letter-spacing:0.5px;">AI ตอบแชทอัตโนมัติสำหรับธุรกิจไทย</div>
@@ -269,14 +272,21 @@ async function sendBillingSuccessEmail({ to, name, planName, amount, billingPeri
       preheader: `ขอบคุณที่ไว้วางใจ MeowChat — แผน ${planName} ของคุณเปิดใช้งานแล้วครับ`,
       body: `
         <div style="text-align:center;margin-bottom:28px;">
-          <div style="
-            display:inline-flex;align-items:center;justify-content:center;
-            width:56px;height:56px;
-            background:rgba(49,195,106,0.1);
-            border:1.5px solid rgba(49,195,106,0.3);
-            border-radius:16px;
-            font-size:28px;margin-bottom:14px;
-          ">✅</div>
+          <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 14px;">
+            <tr>
+              <td align="center" valign="middle" style="
+                width:56px;height:56px;
+                background:rgba(49,195,106,0.1);
+                border:1.5px solid rgba(49,195,106,0.3);
+                border-radius:16px;
+                font-size:28px;
+                line-height:56px;
+                mso-line-height-rule:exactly;
+                text-align:center;
+                vertical-align:middle;
+              ">✅</td>
+            </tr>
+          </table>
           <div style="color:#31C36A;font-size:13px;font-weight:700;letter-spacing:0.5px;margin-bottom:6px;">ชำระเงินสำเร็จ</div>
           <div style="color:#FFFFFF;font-size:22px;font-weight:800;letter-spacing:-0.5px;">แผน ${planName}</div>
           <div style="color:rgba(255,255,255,0.4);font-size:13px;margin-top:4px;">พร้อมใช้งานแล้ว</div>
