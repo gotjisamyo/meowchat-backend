@@ -111,7 +111,7 @@ async function uploadImageToFacebook(base64DataUrl) {
   const mimeType = matches[1];
   const buffer = Buffer.from(matches[2], 'base64');
 
-  const { FormData, Blob } = await import('node:buffer').then(() => globalThis).catch(() => require('buffer'));
+  // FormData + Blob are global in Node 18+
   const form = new FormData();
   form.append('source', new Blob([buffer], { type: mimeType }), 'image.jpg');
   form.append('published', 'false');
