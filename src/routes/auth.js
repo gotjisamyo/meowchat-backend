@@ -19,9 +19,11 @@ const registerLimiter = rateLimit({
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_LOCK_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
+const VALID_PLANS = ['starter', 'pro', 'business'];
+
 router.post('/register', registerLimiter, async (req, res) => {
   try {
-    const { email, password, name } = req.body;
+    const { email, password, name, shopName, plan, billing_period } = req.body;
 
     if (!email || !password || !name) {
       return res.status(400).json({
@@ -55,10 +57,16 @@ router.post('/register', registerLimiter, async (req, res) => {
       });
     }
 
+    // Sanitize optional plan/billing fields
+    const pendingPlan = VALID_PLANS.includes(plan?.toLowerCase()) ? plan.toLowerCase() : null;
+    const pendingBilling = billing_period === 'annual' ? 'annual' : 'monthly';
+    const safeShopName = shopName ? shopName.replace(/<[^>]*>/g, '').trim().slice(0, 100) : null;
+
     const passwordHash = await bcrypt.hash(password, 10);
     const result = await db.run(
-      'INSERT INTO users (email, password_hash, name, role) VALUES (?, ?, ?, ?) RETURNING id',
-      [email, passwordHash, name, 'user']
+      `INSERT INTO users (email, password_hash, name, company, pending_plan, pending_billing, role)
+       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      [email, passwordHash, name, safeShopName, pendingPlan, pendingBilling, 'user']
     );
 
     const token = generateToken(result.lastInsertRowid, 'user');
