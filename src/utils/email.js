@@ -65,19 +65,18 @@ function base({ preheader = '', body }) {
         padding: 36px 40px 28px;
         text-align: center;
       ">
-        <!-- Logo mark (table-based for email client compat) -->
+        <!-- Logo mark — padding-based centering (Gmail-safe) -->
         <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 14px;">
           <tr>
-            <td align="center" valign="middle" style="
-              width:52px; height:52px;
+            <td align="center" style="
+              width:52px;
               background: linear-gradient(135deg, #1a2e1e 0%, #0f1f14 100%);
               border: 1.5px solid rgba(49,195,106,0.3);
               border-radius: 14px;
               font-size: 26px;
-              line-height: 52px;
-              mso-line-height-rule: exactly;
+              line-height: 1;
+              padding: 13px;
               text-align: center;
-              vertical-align: middle;
             ">🐱</td>
           </tr>
         </table>
@@ -276,16 +275,15 @@ async function sendBillingSuccessEmail({ to, name, planName, amount, billingPeri
         <div style="text-align:center;margin-bottom:28px;">
           <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 14px;">
             <tr>
-              <td align="center" valign="middle" style="
-                width:56px;height:56px;
+              <td align="center" style="
+                width:56px;
                 background:rgba(49,195,106,0.1);
                 border:1.5px solid rgba(49,195,106,0.3);
                 border-radius:16px;
                 font-size:28px;
-                line-height:56px;
-                mso-line-height-rule:exactly;
+                line-height:1;
+                padding:14px;
                 text-align:center;
-                vertical-align:middle;
               ">✅</td>
             </tr>
           </table>
