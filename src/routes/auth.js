@@ -176,7 +176,7 @@ router.post('/login', registerLimiter, async (req, res) => {
 router.get('/me', authMiddleware, async (req, res) => {
   try {
     const db = getDb();
-    const user = await db.get('SELECT id, email, name, phone, company, role, created_at FROM users WHERE id = ?', [req.userId]);
+    const user = await db.get('SELECT id, email, name, phone, company, role, created_at, pending_plan, pending_billing FROM users WHERE id = ?', [req.userId]);
 
     if (!user) {
       return res.status(404).json({

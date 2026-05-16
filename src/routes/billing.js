@@ -409,10 +409,40 @@ async function resolveOwnedShopFromRequest(req, res) {
   return requireOwnedShop(req, res, shopId);
 }
 
-async function createCheckoutSession({ shop, plan, successUrl, cancelUrl, customerEmail }) {
+async function createCheckoutSession({ shop, plan, successUrl, cancelUrl, customerEmail, billingPeriod = 'monthly' }) {
   const stripe = getStripeClient();
   const currency = (process.env.STRIPE_CURRENCY || 'thb').toLowerCase();
-  const appUrl = process.env.APP_URL || 'http://localhost:3000';
+  const appUrl = process.env.APP_URL || 'https://my.meowchat.store';
+  const isAnnual = billingPeriod === 'annual';
+
+  // Annual = 10 months (2 months free, ~17% discount)
+  const lineItem = isAnnual
+    ? {
+        price_data: {
+          currency,
+          recurring: { interval: 'year' },
+          product_data: {
+            name: `MeowChat ${plan.name} (รายปี)`,
+            description: `${plan.name} — จ่ายรายปี ประหยัด 2 เดือน`
+          },
+          unit_amount: Math.round(Number(plan.price) * 10 * 100)
+        },
+        quantity: 1
+      }
+    : plan.stripe_price_id
+      ? { price: plan.stripe_price_id, quantity: 1 }
+      : {
+          price_data: {
+            currency,
+            recurring: { interval: 'month' },
+            product_data: {
+              name: `MeowChat ${plan.name}`,
+              description: `${plan.name} plan for ${shop.name}`
+            },
+            unit_amount: Math.round(Number(plan.price) * 100)
+          },
+          quantity: 1
+        };
 
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
@@ -430,31 +460,13 @@ async function createCheckoutSession({ shop, plan, successUrl, cancelUrl, custom
         planId: String(plan.id)
       }
     },
-    line_items: [
-      plan.stripe_price_id
-        ? {
-            price: plan.stripe_price_id,
-            quantity: 1
-          }
-        : {
-            price_data: {
-              currency,
-              recurring: { interval: 'month' },
-              product_data: {
-                name: `MeowChat ${plan.name}`,
-                description: `${plan.name} plan for ${shop.name}`
-              },
-              unit_amount: Math.round(Number(plan.price) * 100)
-            },
-            quantity: 1
-          }
-    ]
+    line_items: [lineItem]
   });
 
   return session;
 }
 
-async function createCheckoutSessionResponse({ shop, planId, successUrl, cancelUrl, customerEmail }) {
+async function createCheckoutSessionResponse({ shop, planId, billingPeriod = 'monthly', successUrl, cancelUrl, customerEmail }) {
   if (!planId) {
     throw new Error('Plan ID is required');
   }
@@ -467,6 +479,7 @@ async function createCheckoutSessionResponse({ shop, planId, successUrl, cancelU
   const session = await createCheckoutSession({
     shop,
     plan,
+    billingPeriod,
     successUrl,
     cancelUrl,
     customerEmail
@@ -668,13 +681,14 @@ function setupBillingRoutes(app) {
 
   app.post('/api/billing/checkout', authMiddleware, async (req, res) => {
     try {
-      const { planId, successUrl, cancelUrl, customerEmail } = req.body;
+      const { planId, billingPeriod, successUrl, cancelUrl, customerEmail } = req.body;
       const shop = await resolveOwnedShopFromRequest(req, res);
       if (!shop) return;
 
       const data = await createCheckoutSessionResponse({
         shop,
         planId,
+        billingPeriod: billingPeriod || 'monthly',
         successUrl,
         cancelUrl,
         customerEmail: customerEmail || req.user?.email
@@ -685,6 +699,60 @@ function setupBillingRoutes(app) {
       console.error('Create checkout error:', error);
       const statusCode = error.message === 'Plan not found' ? 404 : 400;
       res.status(statusCode).json({ success: false, error: error.message });
+    }
+  });
+
+  // Create Stripe checkout from user's pending plan (set at registration)
+  app.post('/api/billing/checkout-from-pending', authMiddleware, async (req, res) => {
+    try {
+      const db = getDb();
+      const user = await db.get(
+        'SELECT pending_plan, pending_billing, email FROM users WHERE id = ?',
+        [req.userId]
+      );
+
+      if (!user?.pending_plan) {
+        return res.status(400).json({ success: false, error: 'No pending plan found' });
+      }
+
+      const plan = await db.get(
+        'SELECT * FROM plans WHERE LOWER(name) = LOWER(?) AND is_active = 1',
+        [user.pending_plan]
+      );
+      if (!plan) {
+        return res.status(404).json({ success: false, error: 'Plan not found' });
+      }
+
+      const shop = await db.get(
+        'SELECT * FROM shops WHERE user_id = ? ORDER BY created_at ASC LIMIT 1',
+        [req.userId]
+      );
+      if (!shop) {
+        return res.status(404).json({ success: false, error: 'No shop found — complete onboarding first' });
+      }
+
+      const billingPeriod = user.pending_billing === 'annual' ? 'annual' : 'monthly';
+      const appUrl = process.env.APP_URL || 'https://my.meowchat.store';
+
+      const data = await createCheckoutSessionResponse({
+        shop,
+        planId: plan.id,
+        billingPeriod,
+        customerEmail: user.email,
+        successUrl: `${appUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancelUrl: `${appUrl}/billing/cancel`
+      });
+
+      // Clear pending intent once checkout session is created
+      await db.run(
+        'UPDATE users SET pending_plan = NULL, pending_billing = NULL WHERE id = ?',
+        [req.userId]
+      );
+
+      res.json({ success: true, data });
+    } catch (error) {
+      console.error('Checkout from pending error:', error);
+      res.status(500).json({ success: false, error: error.message });
     }
   });
 
