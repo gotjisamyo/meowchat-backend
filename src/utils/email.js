@@ -210,7 +210,7 @@ function ctaButton(text, url, color = '#31C36A') {
 }
 
 function greeting(name) {
-  return `<p style="color:rgba(255,255,255,0.9);font-size:15px;line-height:1.7;margin-bottom:6px;">สวัสดีครับคุณ <strong style="color:#FFFFFF;">${name || 'คุณ'}</strong> 👋</p>`;
+  return `<p style="color:rgba(255,255,255,0.9);font-size:15px;line-height:1.7;margin-bottom:6px;">สวัสดีครับคุณ <span style="white-space:nowrap;"><strong style="color:#FFFFFF;">${name || 'คุณ'}</strong> 👋</span></p>`;
 }
 
 // ─── Templates ────────────────────────────────────────────────────────────────
@@ -330,18 +330,21 @@ async function sendEscalationEmail({ to, shopName, customerName, message }) {
       preheader: `${customerName || 'ลูกค้า'} ส่งข้อความ: "${message?.slice(0, 60)}..."`,
       body: `
         <div style="margin-bottom:24px;">
-          <div style="
-            display:inline-block;
-            background:rgba(255,140,66,0.1);
-            border:1px solid rgba(255,140,66,0.25);
-            border-radius:8px;
-            padding:4px 12px;
-            color:#FF8C42;
-            font-size:12px;
-            font-weight:700;
-            letter-spacing:0.5px;
-            margin-bottom:16px;
-          ">⚠️ ต้องการพนักงาน</div>
+          <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
+            <tr>
+              <td style="
+                background:rgba(255,140,66,0.1);
+                border:1px solid rgba(255,140,66,0.25);
+                border-radius:8px;
+                padding:4px 12px;
+                color:#FF8C42;
+                font-size:12px;
+                font-weight:700;
+                letter-spacing:0.5px;
+                white-space:nowrap;
+              ">⚠️ ต้องการพนักงาน</td>
+            </tr>
+          </table>
 
           <p style="color:#FFFFFF;font-size:18px;font-weight:700;margin-bottom:6px;">มีลูกค้าขอคุยกับพนักงานครับ</p>
           <p style="color:rgba(255,255,255,0.5);font-size:13px;">${now}</p>
