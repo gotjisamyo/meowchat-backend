@@ -104,23 +104,24 @@ async function generateSalesImage(imagePrompt, thaiText) {
   return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
 }
 
-// Upload base64 image to Facebook, return photo_id (for attaching to feed post)
-async function uploadImageToFacebook(base64DataUrl) {
+// Publish photo post directly to page (single step — avoids unpublished permission issue)
+async function publishPhotoPost(base64DataUrl, caption) {
   const matches = base64DataUrl.match(/^data:(.+);base64,(.+)$/);
   if (!matches) throw new Error('Invalid base64 data URL');
   const mimeType = matches[1];
   const buffer = Buffer.from(matches[2], 'base64');
 
-  // FormData + Blob are global in Node 18+
   const form = new FormData();
   form.append('source', new Blob([buffer], { type: mimeType }), 'image.jpg');
-  form.append('published', 'false');
+  form.append('caption', caption);
+  form.append('published', 'true');
   form.append('access_token', PAGE_TOKEN());
 
   const res = await fetch(`${FB_API}/${PAGE_ID()}/photos`, { method: 'POST', body: form });
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
-  return data.id;
+  // Returns { id: photo_id, post_id: feed_post_id }
+  return data;
 }
 
 // ── List posts ─────────────────────────────────────────────────
@@ -316,20 +317,22 @@ router.post('/:id/publish', authMiddleware, requireAdmin, async (req, res) => {
     if (!post) return res.status(404).json({ error: 'Post not found' });
     if (post.status === 'published') return res.status(400).json({ error: 'Already published' });
 
-    let fbResult;
+    let result;
     if (post.image_url?.startsWith('data:')) {
-      // AI-generated image: upload to FB Photos first, then post feed with attached photo
-      const photoId = await uploadImageToFacebook(post.image_url);
-      fbResult = await fbPost(`/${PAGE_ID()}/feed`, {
-        message: post.content,
-        attached_media: [{ media_fbid: photoId }],
+      // AI-generated base64 image: publish photo + caption in one step
+      const photoResult = await publishPhotoPost(post.image_url, post.content);
+      result = { id: photoResult.post_id || photoResult.id };
+    } else if (post.image_url) {
+      // External image URL: attach via photos endpoint
+      result = await fbPost(`/${PAGE_ID()}/photos`, {
+        url: post.image_url,
+        caption: post.content,
+        published: true,
       });
     } else {
-      const fbBody = { message: post.content };
-      if (post.image_url) fbBody.link = post.image_url;
-      fbResult = await fbPost(`/${PAGE_ID()}/feed`, fbBody);
+      // Text only
+      result = await fbPost(`/${PAGE_ID()}/feed`, { message: post.content });
     }
-    const result = fbResult;
 
     const updated = await db.get(`
       UPDATE facebook_posts SET
@@ -400,9 +403,15 @@ router.post('/cron/run', async (req, res) => {
   const results = [];
   for (const post of due) {
     try {
-      const fbBody = { message: post.content };
-      if (post.image_url) fbBody.link = post.image_url;
-      const result = await fbPost(`/${PAGE_ID()}/feed`, fbBody);
+      let result;
+      if (post.image_url?.startsWith('data:')) {
+        const photoResult = await publishPhotoPost(post.image_url, post.content);
+        result = { id: photoResult.post_id || photoResult.id };
+      } else if (post.image_url) {
+        result = await fbPost(`/${PAGE_ID()}/photos`, { url: post.image_url, caption: post.content, published: true });
+      } else {
+        result = await fbPost(`/${PAGE_ID()}/feed`, { message: post.content });
+      }
       await db.run(`
         UPDATE facebook_posts SET status='published', fb_post_id=$1,
           published_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=$2
