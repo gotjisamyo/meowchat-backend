@@ -8,6 +8,7 @@ const FB_API = 'https://graph.facebook.com/v21.0';
 const PAGE_ID = () => process.env.FB_PAGE_ID;
 const PAGE_TOKEN = () => process.env.FB_PAGE_TOKEN;
 const GEMINI_KEY = () => process.env.GEMINI_API_KEY;
+const OPENAI_KEY = () => process.env.OPENAI_API_KEY;
 
 // ── Helpers ────────────────────────────────────────────────────
 
@@ -75,33 +76,36 @@ async function analyzePostForSalesImage(content) {
   return JSON.parse(match[0]);
 }
 
-// Generate sales image using Gemini 2.0 Flash image generation
+// Generate sales image using GPT Image (gpt-image-1)
 async function generateSalesImage(imagePrompt, thaiText) {
-  if (!GEMINI_KEY()) throw new Error('GEMINI_API_KEY not set');
+  if (!OPENAI_KEY()) throw new Error('OPENAI_API_KEY not set');
 
   const fullPrompt = thaiText
-    ? `${imagePrompt}. The image must prominently include Thai text: "${thaiText}" — use clean, modern Thai typography, large and readable.`
+    ? `${imagePrompt}. Include bold Thai text "${thaiText}" prominently in the image — large, clean, modern typography.`
     : imagePrompt;
 
-  const model = 'gemini-2.5-flash-image';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY()}`;
-
-  const res = await fetch(url, {
+  const res = await fetch('https://api.openai.com/v1/images/generations', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${OPENAI_KEY()}`,
+    },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: fullPrompt }] }],
-      generationConfig: { responseModalities: ['IMAGE'] },
+      model: 'gpt-image-1',
+      prompt: fullPrompt,
+      n: 1,
+      size: '1024x1024',
+      quality: 'medium',
     }),
   });
 
   const data = await res.json();
   if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
 
-  const imagePart = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-  if (!imagePart) throw new Error('No image returned from Gemini');
+  const b64 = data.data?.[0]?.b64_json;
+  if (!b64) throw new Error('No image returned from OpenAI');
 
-  return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
+  return `data:image/png;base64,${b64}`;
 }
 
 // Publish photo post directly to page (single step — avoids unpublished permission issue)
