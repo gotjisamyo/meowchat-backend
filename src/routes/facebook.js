@@ -76,7 +76,7 @@ async function analyzePostForSalesImage(content) {
   return JSON.parse(match[0]);
 }
 
-// Generate sales image using Imagen 3 (best Thai text quality)
+// Generate sales image using Gemini 2.5 Flash Image
 async function generateSalesImage(imagePrompt, thaiText) {
   if (!GEMINI_KEY()) throw new Error('GEMINI_API_KEY not set');
 
@@ -84,24 +84,24 @@ async function generateSalesImage(imagePrompt, thaiText) {
     ? `${imagePrompt}. Include bold Thai text "${thaiText}" prominently in the image — large, clean, modern typography.`
     : imagePrompt;
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${GEMINI_KEY()}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${GEMINI_KEY()}`;
 
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      instances: [{ prompt: fullPrompt }],
-      parameters: { sampleCount: 1, aspectRatio: '1:1' },
+      contents: [{ parts: [{ text: fullPrompt }] }],
+      generationConfig: { responseModalities: ['IMAGE'] },
     }),
   });
 
   const data = await res.json();
   if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
 
-  const prediction = data.predictions?.[0];
-  if (!prediction?.bytesBase64Encoded) throw new Error('No image returned from Imagen 3');
+  const imagePart = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+  if (!imagePart) throw new Error('No image returned from Gemini');
 
-  return `data:${prediction.mimeType || 'image/png'};base64,${prediction.bytesBase64Encoded}`;
+  return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
 }
 
 // Publish photo post directly to page (single step — avoids unpublished permission issue)
