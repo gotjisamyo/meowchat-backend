@@ -767,6 +767,15 @@ async function initDatabase() {
   // Add image_analysis column to facebook_posts for AI sales analysis
   try { await db.exec(`ALTER TABLE facebook_posts ADD COLUMN IF NOT EXISTS image_analysis TEXT`); } catch (_) {}
 
+  // Key-value store for OAuth tokens and app settings
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   console.log('✅ Database initialized successfully');
 }
 

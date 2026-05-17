@@ -8,7 +8,52 @@ const FB_API = 'https://graph.facebook.com/v21.0';
 const PAGE_ID = () => process.env.FB_PAGE_ID;
 const PAGE_TOKEN = () => process.env.FB_PAGE_TOKEN;
 const GEMINI_KEY = () => process.env.GEMINI_API_KEY;
-const OPENAI_KEY = () => process.env.OPENAI_API_KEY;
+const CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'; // ChatGPT OAuth client
+
+// ── Codex OAuth Token Management ───────────────────────────────
+
+async function getCodexTokens() {
+  const db = getDb();
+  const [atRow, rtRow] = await Promise.all([
+    db.get('SELECT value FROM app_settings WHERE key = ?', ['codex_access_token']),
+    db.get('SELECT value FROM app_settings WHERE key = ?', ['codex_refresh_token']),
+  ]);
+  return {
+    accessToken: atRow?.value || process.env.CODEX_ACCESS_TOKEN || null,
+    refreshToken: rtRow?.value || process.env.CODEX_REFRESH_TOKEN || null,
+  };
+}
+
+async function saveCodexTokens(accessToken, refreshToken) {
+  const db = getDb();
+  const now = new Date().toISOString();
+  await db.run(
+    'INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at',
+    ['codex_access_token', accessToken, now]
+  );
+  if (refreshToken) {
+    await db.run(
+      'INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at',
+      ['codex_refresh_token', refreshToken, now]
+    );
+  }
+}
+
+async function refreshCodexToken(refreshToken) {
+  const res = await fetch('https://auth.openai.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: CODEX_CLIENT_ID,
+      refresh_token: refreshToken,
+    }),
+  });
+  const data = await res.json();
+  if (!data.access_token) throw new Error('Token refresh failed: ' + JSON.stringify(data));
+  await saveCodexTokens(data.access_token, data.refresh_token || refreshToken);
+  return data.access_token;
+}
 
 // ── Helpers ────────────────────────────────────────────────────
 
@@ -76,32 +121,61 @@ async function analyzePostForSalesImage(content) {
   return JSON.parse(match[0]);
 }
 
-// Generate sales image using Gemini 2.5 Flash Image
-async function generateSalesImage(imagePrompt, thaiText) {
-  if (!GEMINI_KEY()) throw new Error('GEMINI_API_KEY not set');
+// Generate sales image via Codex OAuth → gpt-image-2
+async function generateSalesImage(imagePrompt, thaiText, retry = false) {
+  const { accessToken, refreshToken } = await getCodexTokens();
+  if (!accessToken) throw new Error('Codex access token not configured');
 
   const fullPrompt = thaiText
-    ? `${imagePrompt}. Include bold Thai text "${thaiText}" prominently in the image — large, clean, modern typography.`
+    ? `${imagePrompt}. Include bold Thai text "${thaiText}" prominently in the image — large, clean, modern Thai typography.`
     : imagePrompt;
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${GEMINI_KEY()}`;
-
-  const res = await fetch(url, {
+  const res = await fetch('https://chatgpt.com/backend-api/codex/responses', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: fullPrompt }] }],
-      generationConfig: { responseModalities: ['IMAGE'] },
+      model: 'gpt-5.4',
+      store: false,
+      stream: true,
+      instructions: 'You are an image generation assistant. Always generate images immediately when requested.',
+      tools: [{ type: 'image_generation' }],
+      input: [{ role: 'user', content: fullPrompt }],
     }),
   });
 
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+  // Token expired — refresh and retry once
+  if (res.status === 401 && !retry) {
+    if (!refreshToken) throw new Error('Codex refresh token not configured');
+    const newToken = await refreshCodexToken(refreshToken);
+    return generateSalesImage(imagePrompt, thaiText, true);
+  }
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Codex API error ${res.status}: ${err}`);
+  }
 
-  const imagePart = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-  if (!imagePart) throw new Error('No image returned from Gemini');
-
-  return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
+  // Parse SSE stream to extract image result
+  const text = await res.text();
+  const lines = text.split('\n');
+  for (const line of lines) {
+    if (!line.startsWith('data:')) continue;
+    try {
+      const event = JSON.parse(line.slice(5));
+      if (event.type === 'response.output_item.done' &&
+          event.item?.type === 'image_generation_call' &&
+          event.item?.result) {
+        return `data:image/png;base64,${event.item.result}`;
+      }
+      // Also check partial_image as fallback
+      if (event.type === 'response.image_generation_call.partial_image' && event.partial_image_b64) {
+        return `data:image/png;base64,${event.partial_image_b64}`;
+      }
+    } catch (_) {}
+  }
+  throw new Error('No image data in Codex response');
 }
 
 // Publish photo post directly to page (single step — avoids unpublished permission issue)
