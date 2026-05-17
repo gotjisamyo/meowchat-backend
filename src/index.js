@@ -24,6 +24,9 @@ const allowedOrigins = [
   'https://meowchat.store',
   'https://my.meowchat.store',
   'https://meowchat-admin-dashboard.vercel.app',
+  'http://localhost:4173',
+  'http://localhost:5173',
+  'http://localhost:3000',
   process.env.FRONTEND_URL,
   process.env.ADMIN_URL,
 ].filter(Boolean);
