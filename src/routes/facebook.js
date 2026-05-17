@@ -132,6 +132,7 @@ async function generateSalesImage(imagePrompt, thaiText, retry = false) {
 
   const res = await fetch('https://chatgpt.com/backend-api/codex/responses', {
     method: 'POST',
+    signal: AbortSignal.timeout(90000),
     headers: {
       'Authorization': `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
